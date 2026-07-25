@@ -24,7 +24,7 @@ jobs:
       SSH_HOST: ${{ secrets.EC2_HOST }}
       SSH_USER: ${{ secrets.EC2_USER }}
       DEPLOY_PATH: ${{ secrets.EC2_DEPLOY_PATH }}
-      SSH_KEY_FILE: ${{ runner.temp }}/ec2_deploy_key
+      SSH_KEY_FILE: /tmp/ec2_deploy_key
       RELEASE_ARCHIVE: meridian-emr-${{ github.sha }}.tar.gz
 
     steps:
@@ -72,15 +72,31 @@ jobs:
           set -euo pipefail
 
           install -d -m 700 "$HOME/.ssh"
+
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$SSH_KEY_FILE"
           chmod 600 "$SSH_KEY_FILE"
+
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Test SSH connection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            "echo 'SSH connection successful'"
 
       - name: Package exact source revision
         shell: bash
         run: |
           set -euo pipefail
+
           git archive \
             --format=tar.gz \
             --output="$RUNNER_TEMP/$RELEASE_ARCHIVE" \
@@ -90,36 +106,50 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           ssh \
             -i "$SSH_KEY_FILE" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
             "$SSH_USER@$SSH_HOST" \
             bash -s -- "$DEPLOY_PATH" <<'REMOTE'
           set -euo pipefail
 
           deploy_root="$1"
+
           install -d -m 750 \
             "$deploy_root" \
             "$deploy_root/incoming" \
             "$deploy_root/releases" \
             "$deploy_root/shared"
-          test -f "$deploy_root/shared/.env" || {
+
+          if [[ ! -f "$deploy_root/shared/.env" ]]; then
             echo "Missing production environment file: $deploy_root/shared/.env" >&2
             exit 1
+          fi
+
+          command -v docker >/dev/null 2>&1 || {
+            echo "Docker is not installed on the EC2 server." >&2
+            exit 1
           }
-          command -v docker >/dev/null
-          docker compose version >/dev/null
+
+          docker compose version >/dev/null 2>&1 || {
+            echo "Docker Compose is not available on the EC2 server." >&2
+            exit 1
+          }
           REMOTE
 
       - name: Upload release archive
         shell: bash
         run: |
           set -euo pipefail
+
           scp \
             -i "$SSH_KEY_FILE" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
             "$RUNNER_TEMP/$RELEASE_ARCHIVE" \
             "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/incoming/$RELEASE_ARCHIVE"
 
@@ -132,6 +162,7 @@ jobs:
             -i "$SSH_KEY_FILE" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
             "$SSH_USER@$SSH_HOST" \
             bash -s -- "$DEPLOY_PATH" "$GITHUB_SHA" "$RELEASE_ARCHIVE" <<'REMOTE'
           set -Eeuo pipefail
@@ -139,17 +170,19 @@ jobs:
           deploy_root="$1"
           release_sha="$2"
           archive_name="$3"
+
           release_dir="$deploy_root/releases/$release_sha"
           archive_path="$deploy_root/incoming/$archive_name"
           previous_release=""
 
           if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Invalid release SHA." >&2
+            echo "Invalid release SHA: $release_sha" >&2
             exit 1
           fi
 
           case "$release_dir" in
-            "$deploy_root"/releases/*) ;;
+            "$deploy_root"/releases/*)
+              ;;
             *)
               echo "Release directory escaped the configured deployment root." >&2
               exit 1
@@ -164,54 +197,93 @@ jobs:
             exit_code=$?
             trap - ERR
 
-            echo "Deployment failed; attempting application rollback." >&2
+            echo "Deployment failed. Attempting rollback." >&2
+
             if [[ -n "$previous_release" && -f "$previous_release/compose.production.yaml" ]]; then
               previous_tag="$(basename "$previous_release")"
+
               (
                 cd "$previous_release"
                 export IMAGE_TAG="$previous_tag"
-                docker compose -f compose.production.yaml up \
+
+                docker compose \
+                  -f compose.production.yaml \
+                  up \
                   --detach \
                   --no-build \
                   --remove-orphans
-              ) || echo "Automatic rollback failed; manual intervention is required." >&2
+              ) || {
+                echo "Automatic rollback failed. Manual intervention is required." >&2
+              }
+            else
+              echo "No previous release is available for rollback." >&2
             fi
 
             exit "$exit_code"
           }
+
           trap rollback ERR
 
-          test -f "$archive_path"
+          if [[ ! -f "$archive_path" ]]; then
+            echo "Release archive was not found: $archive_path" >&2
+            exit 1
+          fi
+
           rm -rf "$release_dir"
           install -d -m 750 "$release_dir"
+
           tar -xzf "$archive_path" -C "$release_dir"
+
           ln -s "$deploy_root/shared/.env" "$release_dir/.env"
 
           cd "$release_dir"
           export IMAGE_TAG="$release_sha"
 
-          docker compose -f compose.production.yaml config --quiet
-          docker compose -f compose.production.yaml build --pull api
+          if [[ ! -f compose.production.yaml ]]; then
+            echo "compose.production.yaml is missing from the release." >&2
+            exit 1
+          fi
 
-          # This is idempotent for the current repository. Replace it with
-          # `alembic upgrade head` after proper Alembic migrations are added.
-          docker compose -f compose.production.yaml run \
+          docker compose \
+            -f compose.production.yaml \
+            config --quiet
+
+          docker compose \
+            -f compose.production.yaml \
+            build \
+            --pull \
+            api
+
+          docker compose \
+            -f compose.production.yaml \
+            run \
             --rm \
             --no-deps \
             api \
             python -m scripts.database_setup --create
 
-          docker compose -f compose.production.yaml up \
+          docker compose \
+            -f compose.production.yaml \
+            up \
             --detach \
             --no-build \
             --remove-orphans
 
           api_container_id="$(
-            docker compose -f compose.production.yaml ps --quiet api
+            docker compose \
+              -f compose.production.yaml \
+              ps \
+              --quiet \
+              api
           )"
-          test -n "$api_container_id"
+
+          if [[ -z "$api_container_id" ]]; then
+            echo "API container was not created." >&2
+            exit 1
+          fi
 
           healthy=false
+
           for attempt in $(seq 1 30); do
             health_status="$(
               docker inspect \
@@ -219,49 +291,84 @@ jobs:
                 "$api_container_id"
             )"
 
+            echo "API health check $attempt/30: $health_status"
+
             if [[ "$health_status" == "healthy" ]]; then
               healthy=true
               break
             fi
 
-            if [[ "$health_status" == "unhealthy" || "$health_status" == "exited" || "$health_status" == "dead" ]]; then
-              docker compose -f compose.production.yaml logs --tail=200 api
+            if [[ "$health_status" == "unhealthy" ||
+                  "$health_status" == "exited" ||
+                  "$health_status" == "dead" ]]; then
+              docker compose \
+                -f compose.production.yaml \
+                logs \
+                --tail=200 \
+                api
+
               echo "API entered terminal health state: $health_status" >&2
               exit 1
             fi
 
-            echo "Waiting for API health ($attempt/30): $health_status"
             sleep 5
           done
 
           if [[ "$healthy" != "true" ]]; then
-            docker compose -f compose.production.yaml logs --tail=200 api
+            docker compose \
+              -f compose.production.yaml \
+              logs \
+              --tail=200 \
+              api
+
             echo "API did not become healthy before the deployment timeout." >&2
             exit 1
           fi
 
           running_services="$(
-            docker compose -f compose.production.yaml ps \
+            docker compose \
+              -f compose.production.yaml \
+              ps \
               --services \
               --filter status=running |
               sort
           )"
+
           expected_services="$(
-            printf '%s\n' api reasoning-worker transcription-worker |
+            printf '%s\n' \
+              api \
+              reasoning-worker \
+              transcription-worker |
               sort
           )"
 
           if [[ "$running_services" != "$expected_services" ]]; then
+            echo "Expected services:"
+            echo "$expected_services"
+
+            echo "Running services:"
+            echo "$running_services"
+
             docker compose -f compose.production.yaml ps
             docker compose -f compose.production.yaml logs --tail=100
+
             echo "Not all expected services are running." >&2
             exit 1
           fi
 
           ln -sfn "$release_dir" "$deploy_root/current"
           rm -f "$archive_path"
+
           trap - ERR
 
           docker compose -f compose.production.yaml ps
+          docker image prune -f
+
           echo "Successfully deployed commit $release_sha"
           REMOTE
+
+      - name: Clean up local SSH key
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$SSH_KEY_FILE"
