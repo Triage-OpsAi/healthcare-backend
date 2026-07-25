@@ -4,6 +4,10 @@ x-application: &application
   image: meridian-emr-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
   env_file:
     - .env
+  # PostgreSQL and Redis run on the EC2 host and are currently addressed as
+  # localhost. On Linux, host networking makes that localhost the EC2 host
+  # instead of the individual container.
+  network_mode: host
   restart: unless-stopped
   init: true
   stop_grace_period: 2m
@@ -21,8 +25,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "${API_BIND_ADDRESS:-0.0.0.0}:${API_PORT:-8000}:8000"
     healthcheck:
       test:
         - CMD
