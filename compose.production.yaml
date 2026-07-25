@@ -1,0 +1,63 @@
+name: meridian-emr
+
+x-application: &application
+  image: meridian-emr-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
+  env_file:
+    - .env
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 2m
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  api:
+    <<: *application
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${API_BIND_ADDRESS:-0.0.0.0}:${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=3).read()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  transcription-worker:
+    <<: *application
+    command:
+      - celery
+      - -A
+      - app.celery_app.celery_app
+      - worker
+      - -Q
+      - voice_transcription
+      - --loglevel=INFO
+      - --hostname=transcription@%h
+      - --concurrency=1
+
+  reasoning-worker:
+    <<: *application
+    command:
+      - celery
+      - -A
+      - app.celery_app.celery_app
+      - worker
+      - -Q
+      - patient_emr
+      - --loglevel=INFO
+      - --hostname=patient-emr@%h
+      - --concurrency=1
