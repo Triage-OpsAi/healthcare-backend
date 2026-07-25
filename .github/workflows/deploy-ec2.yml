@@ -26,6 +26,7 @@ jobs:
       DEPLOY_PATH: ${{ secrets.EC2_DEPLOY_PATH }}
       SSH_KEY_FILE: /tmp/ec2_deploy_key
       RELEASE_ARCHIVE: meridian-emr-${{ github.sha }}.tar.gz
+      LOCAL_ENV_FILE: /tmp/meridian-production.env
 
     steps:
       - name: Check out pushed commit
@@ -35,7 +36,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Validate required deployment secrets
+      - name: Validate EC2 deployment secrets
         shell: bash
         env:
           SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
@@ -92,17 +93,201 @@ jobs:
             "$SSH_USER@$SSH_HOST" \
             "echo 'SSH connection successful'"
 
-      - name: Package exact source revision
+      - name: Create production env from GitHub Environment
         shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || vars.DATABASE_URL }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY || vars.JWT_SECRET_KEY }}
+          JWT_ALGORITHM: ${{ vars.JWT_ALGORITHM }}
+          ACCESS_TOKEN_EXPIRE_MINUTES: ${{ vars.ACCESS_TOKEN_EXPIRE_MINUTES }}
+          REFRESH_TOKEN_EXPIRE_DAYS: ${{ vars.REFRESH_TOKEN_EXPIRE_DAYS }}
+
+          SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY || vars.SARVAM_API_KEY }}
+          SARVAM_BASE_URL: ${{ vars.SARVAM_BASE_URL }}
+          SARVAM_STT_MODEL: ${{ vars.SARVAM_STT_MODEL }}
+
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || vars.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL }}
+          OPENAI_REASONING_EFFORT: ${{ vars.OPENAI_REASONING_EFFORT }}
+
+          REDIS_URL: ${{ secrets.REDIS_URL || vars.REDIS_URL }}
+
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID || vars.B2_KEY_ID }}
+          B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY || vars.B2_APPLICATION_KEY }}
+          B2_BUCKET: ${{ vars.B2_BUCKET }}
+          B2_S3_ENDPOINT: ${{ vars.B2_S3_ENDPOINT }}
+          B2_PRESIGN_EXPIRE_SECONDS: ${{ vars.B2_PRESIGN_EXPIRE_SECONDS }}
+          VOICE_UPLOAD_MAX_BYTES: ${{ vars.VOICE_UPLOAD_MAX_BYTES }}
+
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          DOCTOR_FRONTEND_URL: ${{ vars.DOCTOR_FRONTEND_URL }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+
+          API_BIND_ADDRESS: ${{ vars.API_BIND_ADDRESS }}
+          API_PORT: ${{ vars.API_PORT }}
         run: |
           set -euo pipefail
 
-          git archive \
-            --format=tar.gz \
-            --output="$RUNNER_TEMP/$RELEASE_ARCHIVE" \
-            "$GITHUB_SHA"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from urllib.parse import urlsplit
 
-      - name: Prepare remote release directory
+          required = [
+              "DATABASE_URL",
+              "JWT_SECRET_KEY",
+              "SARVAM_API_KEY",
+              "OPENAI_API_KEY",
+              "REDIS_URL",
+          ]
+
+          missing = [
+              name
+              for name in required
+              if not os.environ.get(name, "").strip()
+          ]
+
+          if missing:
+              raise SystemExit(
+                  "Missing required GitHub production values: "
+                  + ", ".join(missing)
+              )
+
+          database_url = os.environ["DATABASE_URL"].strip()
+
+          if database_url.startswith("postgresql://"):
+              database_url = database_url.replace(
+                  "postgresql://",
+                  "postgresql+asyncpg://",
+                  1,
+              )
+
+          parsed_database = urlsplit(database_url)
+
+          if parsed_database.hostname in {
+              None,
+              "",
+              "localhost",
+              "127.0.0.1",
+          }:
+              raise SystemExit(
+                  "DATABASE_URL points to localhost or has no valid hostname."
+              )
+
+          values = {
+              "DATABASE_URL": database_url,
+
+              "JWT_SECRET_KEY": os.environ["JWT_SECRET_KEY"],
+              "JWT_ALGORITHM": os.environ.get("JWT_ALGORITHM") or "HS256",
+              "ACCESS_TOKEN_EXPIRE_MINUTES": (
+                  os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES") or "15"
+              ),
+              "REFRESH_TOKEN_EXPIRE_DAYS": (
+                  os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS") or "7"
+              ),
+
+              "SARVAM_API_KEY": os.environ["SARVAM_API_KEY"],
+              "SARVAM_BASE_URL": (
+                  os.environ.get("SARVAM_BASE_URL")
+                  or "https://api.sarvam.ai"
+              ),
+              "SARVAM_STT_MODEL": (
+                  os.environ.get("SARVAM_STT_MODEL")
+                  or "saaras:v3"
+              ),
+
+              "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
+              "OPENAI_MODEL": (
+                  os.environ.get("OPENAI_MODEL")
+                  or "gpt-5.6-sol"
+              ),
+              "OPENAI_BASE_URL": (
+                  os.environ.get("OPENAI_BASE_URL")
+                  or "https://api.openai.com/v1"
+              ),
+              "OPENAI_EMBEDDING_MODEL": (
+                  os.environ.get("OPENAI_EMBEDDING_MODEL")
+                  or "text-embedding-3-small"
+              ),
+              "OPENAI_REASONING_EFFORT": (
+                  os.environ.get("OPENAI_REASONING_EFFORT")
+                  or "medium"
+              ),
+
+              "REDIS_URL": os.environ["REDIS_URL"],
+
+              "B2_KEY_ID": os.environ.get("B2_KEY_ID", ""),
+              "B2_APPLICATION_KEY": os.environ.get(
+                  "B2_APPLICATION_KEY",
+                  "",
+              ),
+              "B2_BUCKET": (
+                  os.environ.get("B2_BUCKET")
+                  or "emr-records"
+              ),
+              "B2_S3_ENDPOINT": os.environ.get(
+                  "B2_S3_ENDPOINT",
+                  "",
+              ),
+              "B2_PRESIGN_EXPIRE_SECONDS": (
+                  os.environ.get("B2_PRESIGN_EXPIRE_SECONDS")
+                  or "900"
+              ),
+              "VOICE_UPLOAD_MAX_BYTES": (
+                  os.environ.get("VOICE_UPLOAD_MAX_BYTES")
+                  or "104857600"
+              ),
+
+              "FRONTEND_URL": os.environ.get(
+                  "FRONTEND_URL",
+                  "",
+              ),
+              "DOCTOR_FRONTEND_URL": os.environ.get(
+                  "DOCTOR_FRONTEND_URL",
+                  "",
+              ),
+              "CORS_ORIGINS": (
+                  os.environ.get("CORS_ORIGINS")
+                  or "[]"
+              ),
+
+              "API_BIND_ADDRESS": (
+                  os.environ.get("API_BIND_ADDRESS")
+                  or "0.0.0.0"
+              ),
+              "API_PORT": (
+                  os.environ.get("API_PORT")
+                  or "8000"
+              ),
+          }
+
+          for name, value in values.items():
+              if "\n" in value or "\r" in value:
+                  raise SystemExit(
+                      f"{name} contains an unsupported newline."
+                  )
+
+          output = Path("/tmp/meridian-production.env")
+
+          output.write_text(
+              "".join(
+                  f"{name}={value}\n"
+                  for name, value in values.items()
+              ),
+              encoding="utf-8",
+          )
+
+          output.chmod(0o600)
+
+          print("Production env file created.")
+          print(f"Database host: {parsed_database.hostname}")
+          print(f"Database port: {parsed_database.port}")
+          print(f"Database name: {parsed_database.path}")
+          PY
+
+      - name: Prepare remote deployment directories
         shell: bash
         run: |
           set -euo pipefail
@@ -124,11 +309,6 @@ jobs:
             "$deploy_root/releases" \
             "$deploy_root/shared"
 
-          if [[ ! -f "$deploy_root/shared/.env" ]]; then
-            echo "Missing production environment file: $deploy_root/shared/.env" >&2
-            exit 1
-          fi
-
           command -v docker >/dev/null 2>&1 || {
             echo "Docker is not installed on the EC2 server." >&2
             exit 1
@@ -139,6 +319,80 @@ jobs:
             exit 1
           }
           REMOTE
+
+      - name: Upload production env to EC2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          scp \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$LOCAL_ENV_FILE" \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/shared/.env.new"
+
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            bash -s -- "$DEPLOY_PATH" <<'REMOTE'
+          set -euo pipefail
+
+          deploy_root="$1"
+
+          chmod 600 "$deploy_root/shared/.env.new"
+          mv "$deploy_root/shared/.env.new" "$deploy_root/shared/.env"
+
+          echo "Production env installed at:"
+          echo "$deploy_root/shared/.env"
+
+          python3 - "$deploy_root/shared/.env" <<'PY'
+          import sys
+          from urllib.parse import urlsplit
+
+          env_path = sys.argv[1]
+          database_url = None
+
+          with open(env_path, encoding="utf-8") as file:
+              for line in file:
+                  if line.startswith("DATABASE_URL="):
+                      database_url = line.strip().split("=", 1)[1]
+                      break
+
+          if not database_url:
+              raise SystemExit("DATABASE_URL missing from uploaded env.")
+
+          parsed = urlsplit(database_url)
+
+          if parsed.hostname in {
+              None,
+              "",
+              "localhost",
+              "127.0.0.1",
+          }:
+              raise SystemExit(
+                  "Uploaded DATABASE_URL incorrectly points to localhost."
+              )
+
+          print(f"Uploaded database host: {parsed.hostname}")
+          print(f"Uploaded database port: {parsed.port}")
+          print(f"Uploaded database name: {parsed.path}")
+          PY
+          REMOTE
+
+      - name: Package exact source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git archive \
+            --format=tar.gz \
+            --output="$RUNNER_TEMP/$RELEASE_ARCHIVE" \
+            "$GITHUB_SHA"
 
       - name: Upload release archive
         shell: bash
@@ -164,7 +418,10 @@ jobs:
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             "$SSH_USER@$SSH_HOST" \
-            bash -s -- "$DEPLOY_PATH" "$GITHUB_SHA" "$RELEASE_ARCHIVE" <<'REMOTE'
+            bash -s -- \
+              "$DEPLOY_PATH" \
+              "$GITHUB_SHA" \
+              "$RELEASE_ARCHIVE" <<'REMOTE'
           set -Eeuo pipefail
 
           deploy_root="$1"
@@ -174,7 +431,6 @@ jobs:
           release_dir="$deploy_root/releases/$release_sha"
           archive_path="$deploy_root/incoming/$archive_name"
           previous_release=""
-          export COMPOSE_BAKE=false
 
           if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Invalid release SHA: $release_sha" >&2
@@ -185,7 +441,7 @@ jobs:
             "$deploy_root"/releases/*)
               ;;
             *)
-              echo "Release directory escaped the configured deployment root." >&2
+              echo "Release directory escaped deployment root." >&2
               exit 1
               ;;
           esac
@@ -200,7 +456,8 @@ jobs:
 
             echo "Deployment failed. Attempting rollback." >&2
 
-            if [[ -n "$previous_release" && -f "$previous_release/compose.production.yaml" ]]; then
+            if [[ -n "$previous_release" &&
+                  -f "$previous_release/compose.production.yaml" ]]; then
               previous_tag="$(basename "$previous_release")"
 
               (
@@ -214,7 +471,7 @@ jobs:
                   --no-build \
                   --remove-orphans
               ) || {
-                echo "Automatic rollback failed. Manual intervention is required." >&2
+                echo "Automatic rollback failed." >&2
               }
             else
               echo "No previous release is available for rollback." >&2
@@ -226,7 +483,12 @@ jobs:
           trap rollback ERR
 
           if [[ ! -f "$archive_path" ]]; then
-            echo "Release archive was not found: $archive_path" >&2
+            echo "Release archive not found: $archive_path" >&2
+            exit 1
+          fi
+
+          if [[ ! -f "$deploy_root/shared/.env" ]]; then
+            echo "Production env file is missing." >&2
             exit 1
           fi
 
@@ -235,19 +497,47 @@ jobs:
 
           tar -xzf "$archive_path" -C "$release_dir"
 
-          ln -s "$deploy_root/shared/.env" "$release_dir/.env"
+          ln -sfn \
+            "$deploy_root/shared/.env" \
+            "$release_dir/.env"
 
           cd "$release_dir"
           export IMAGE_TAG="$release_sha"
 
           if [[ ! -f compose.production.yaml ]]; then
-            echo "compose.production.yaml is missing from the release." >&2
+            echo "compose.production.yaml is missing." >&2
             exit 1
           fi
 
           docker compose \
             -f compose.production.yaml \
             config --quiet
+
+          echo "Checking DATABASE_URL received by Docker..."
+
+          docker compose \
+            -f compose.production.yaml \
+            run \
+            --rm \
+            --no-deps \
+            api \
+            python -c '
+          import os
+          from urllib.parse import urlsplit
+
+          value = os.environ["DATABASE_URL"]
+          parsed = urlsplit(value)
+
+          print("Database scheme:", parsed.scheme)
+          print("Database host:", parsed.hostname)
+          print("Database port:", parsed.port)
+          print("Database name:", parsed.path)
+
+          if parsed.hostname in {None, "", "localhost", "127.0.0.1"}:
+              raise SystemExit(
+                  "Docker received an invalid localhost DATABASE_URL."
+              )
+          '
 
           docker compose \
             -f compose.production.yaml \
@@ -308,7 +598,7 @@ jobs:
                 --tail=200 \
                 api
 
-              echo "API entered terminal health state: $health_status" >&2
+              echo "API entered terminal state: $health_status" >&2
               exit 1
             fi
 
@@ -322,7 +612,7 @@ jobs:
               --tail=200 \
               api
 
-            echo "API did not become healthy before the deployment timeout." >&2
+            echo "API did not become healthy in time." >&2
             exit 1
           fi
 
@@ -368,8 +658,9 @@ jobs:
           echo "Successfully deployed commit $release_sha"
           REMOTE
 
-      - name: Clean up local SSH key
+      - name: Clean up sensitive local files
         if: always()
         shell: bash
         run: |
           rm -f "$SSH_KEY_FILE"
+          rm -f "$LOCAL_ENV_FILE"
