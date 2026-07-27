@@ -1,0 +1,25 @@
+ 
+ -------------- patient-emr@DESKTOP-O79IFU7 v5.4.0 (opalescent)
+--- ***** ----- 
+-- ******* ---- Windows-11-10.0.26200-SP0 2026-07-26 17:33:25
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         meridian_voice_pipeline:0x2654c0402f0
+- ** ---------- .> transport:   rediss://default:**@driven-turtle-81174.upstash.io:6379/0
+- ** ---------- .> results:     rediss://default:**@driven-turtle-81174.upstash.io:6379/0
+- *** --- * --- .> concurrency: 1 (solo)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> patient_emr      exchange=patient_emr(direct) key=patient_emr
+                
+
+[tasks]
+  . discharge.generate
+  . discharge.transcribe
+  . handover.generate
+  . handover.transcribe
+  . report.summarize
+  . voice.build_patient_emr
+  . voice.transcribe
+

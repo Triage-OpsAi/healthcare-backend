@@ -23,7 +23,8 @@ from a nurse or doctor's spoken intake. The transcript may be translated from an
 regional language.
 
 Extract only information explicitly present in the transcript. Never guess identity data. \
-The patient full name is required; return an empty string when it was not spoken clearly. \
+Return an empty patient full name when it was not spoken clearly; the system will create an \
+editable unidentified-patient record with a generated ID. \
 patient_reference means a hospital ID, MRN, ABHA ID, or other explicitly spoken identifier. \
 For date_of_birth use YYYY-MM-DD only when a complete date was spoken. Keep age separately \
 when only an age was spoken. Put consultation content into the SOAP note. Do not output \
@@ -138,10 +139,6 @@ async def extract_voice_intake(translated_text: str) -> dict:
     intake = json.loads(_output_text(response.json()))
     patient = intake["patient"]
     patient["full_name"] = " ".join(patient["full_name"].split())
-    if len(patient["full_name"]) < 2:
-        raise PatientDetailsError(
-            "Patient name was not clear. Record again and begin with the patient's full name."
-        )
     if patient["age"] is not None and not 0 <= patient["age"] <= 130:
         raise PatientDetailsError("The spoken patient age must be between 0 and 130.")
     return intake
@@ -235,13 +232,15 @@ async def build_patient_and_encounter(
         patient = Patient(
             hospital_id=hospital_id,
             abha_id=reference,
-            full_name=data["full_name"],
+            full_name=data["full_name"] or "Unidentified patient",
             date_of_birth=dob,
             gender=gender,
             phone=phone,
         )
         db.add(patient)
         await db.flush()
+        if not data["full_name"]:
+            patient.full_name = f"Unidentified patient {str(patient.id)[:8].upper()}"
     else:
         # Preserve existing identity values and only fill information that is absent.
         patient.full_name = patient.full_name or data["full_name"]

@@ -21,7 +21,7 @@ from app.schemas.emr import (
     VoiceIntakeResponse,
     VoicePatientDetails,
 )
-from app.services import audit_service, emr_service, patient_builder_service, sarvam_service
+from app.services import audit_events, audit_service, emr_service, emr_sync_service, patient_builder_service, sarvam_service
 from app.services.authorization import assert_same_hospital, require_permission
 from app.services.sarvam_service import SUPPORTED_LANGUAGES
 
@@ -409,6 +409,7 @@ async def review_record(
             detail=f"Only pending_review records can be approved; current status is {record.status}",
         )
 
+    original_note = record.structured_note
     if payload.edited_structured_note is not None:
         record.structured_note = payload.edited_structured_note.model_dump()
 
@@ -439,14 +440,51 @@ async def review_record(
     await db.commit()
     await db.refresh(record)
 
-    await audit_service.log_event(
-        db,
+    encounter = await db.get(Encounter, record.encounter_id)
+    audit_context = dict(
         hospital_id=current_user.hospital_id,
         user_id=current_user.user_id,
-        action="emr_record.approve",
+        actor_role=current_user.role,
         resource_type="emr_record",
         resource_id=record.id,
-        ip_address=request.client.host if request.client else None,
+        patient_id=encounter.patient_id if encounter else None,
+        encounter_id=record.encounter_id,
+    )
+    await audit_service.safe_log_event(
+        action=audit_events.USER_CONFIRMATION_OR_CORRECTION,
+        changes=(
+            {"structured_note": {"before": original_note, "after": record.structured_note}}
+            if payload.edited_structured_note is not None
+            else None
+        ),
+        event_metadata={
+            "operation": "corrected" if payload.edited_structured_note is not None else "confirmed",
+            "confirmed_code_ids": [str(value) for value in payload.confirmed_code_ids],
+        },
+        **audit_context,
+    )
+    await audit_service.safe_log_event(
+        action=audit_events.NOTE_APPROVED_SIGNED,
+        changes={"status": {"before": "pending_review", "after": "approved"}},
+        **audit_context,
     )
 
+    return await get_record(record_id, request, db, current_user)
+
+
+@router.post(
+    "/records/{record_id}/sync",
+    response_model=EMRRecordDetail,
+    summary="Sync an approved note to the hospital EMR",
+    operation_id="sync_emr_record",
+)
+async def sync_record(
+    record_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:review")),
+):
+    await emr_sync_service.sync_record(
+        db, record_id=record_id, current_user=current_user
+    )
     return await get_record(record_id, request, db, current_user)

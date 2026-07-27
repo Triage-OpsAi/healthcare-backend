@@ -69,6 +69,7 @@ class PatientDashboardSummary(BaseModel):
     status: str
     created_at: datetime
     last_visit_at: datetime | None
+    approval_percentage: int = 0
 
 
 class ClinicalRoleSummary(BaseModel):

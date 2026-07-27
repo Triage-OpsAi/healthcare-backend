@@ -1,6 +1,9 @@
 .env
 .env.*
 !.env.example
+.runtime/
+.local-redis/
+.redis-local*.nupkg
 __pycache__/
 *.py[cod]
 .pytest_cache/

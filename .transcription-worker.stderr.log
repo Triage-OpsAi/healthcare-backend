@@ -1,0 +1,4 @@
+[2026-07-26 17:33:25,899: INFO/MainProcess] Connected to rediss://default:**@driven-turtle-81174.upstash.io:6379/0
+[2026-07-26 17:33:26,287: INFO/MainProcess] mingle: searching for neighbors
+[2026-07-26 17:33:28,960: INFO/MainProcess] mingle: all alone
+[2026-07-26 17:33:31,299: INFO/MainProcess] transcription@DESKTOP-O79IFU7 ready.

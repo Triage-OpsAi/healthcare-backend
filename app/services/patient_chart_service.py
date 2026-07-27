@@ -1,4 +1,5 @@
 import uuid
+from datetime import date, datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -13,6 +14,8 @@ from app.db.models import (
     Patient,
     PatientMedication,
     PatientReport,
+    PatientSectionReview,
+    User,
     VoiceIntakeJob,
 )
 from app.schemas.patient_chart import (
@@ -25,10 +28,30 @@ from app.schemas.patient_chart import (
     PatientMedicationSummary,
     PatientRecordSummary,
     PatientReportSummary,
+    PatientSectionItemUpdateRequest,
+    PatientSectionReviewSummary,
+    PatientSectionUpdateRequest,
     ReportCreateRequest,
     ReportUploadResponse,
 )
-from app.services import clinical_file_storage_service, discharge_pipeline_service
+from app.services import (
+    audit_events,
+    audit_service,
+    clinical_file_storage_service,
+    discharge_pipeline_service,
+    handover_pipeline_service,
+)
+
+SECTION_KEYS = (
+    "summary",
+    "timeline",
+    "clinical",
+    "medications",
+    "diagnoses",
+    "reports",
+    "documents",
+    "handover",
+)
 
 
 def _hospital_id(current_user: CurrentUser) -> uuid.UUID:
@@ -62,14 +85,27 @@ def _report_summary(report: PatientReport) -> PatientReportSummary:
     )
 
 
+def _encounter_summary(note: dict | None) -> str:
+    if not note:
+        return "Clinical encounter captured; structured documentation is being prepared."
+    complaint = str(note.get("chief_complaint") or "").strip()
+    assessment = str(note.get("assessment") or "").strip()
+    plan = str(note.get("plan") or "").strip()
+    parts = [value for value in (complaint, assessment, plan) if value]
+    if not parts:
+        return "Clinical encounter captured with no summary documented."
+    return " · ".join(parts[:3])
+
+
 async def get_chart(
     db: AsyncSession, *, patient_id: uuid.UUID, current_user: CurrentUser
 ) -> PatientChart:
     patient = await _patient(db, patient_id, current_user)
     record_rows = (
         await db.execute(
-            select(EMRRecord, Encounter)
+            select(EMRRecord, Encounter, User)
             .join(Encounter, Encounter.id == EMRRecord.encounter_id)
+            .join(User, User.id == EMRRecord.created_by)
             .where(
                 Encounter.patient_id == patient.id,
                 EMRRecord.hospital_id == patient.hospital_id,
@@ -91,18 +127,57 @@ async def get_chart(
             .order_by(PatientMedication.created_at.desc())
         )
     ).scalars().all()
+    section_reviews = (
+        await db.execute(
+            select(PatientSectionReview)
+            .where(PatientSectionReview.patient_id == patient.id)
+            .order_by(PatientSectionReview.section_key)
+        )
+    ).scalars().all()
+    user_ids = {
+        value
+        for review in section_reviews
+        for value in (review.approved_by, review.updated_by)
+        if value is not None
+    }
+    users = {
+        user.id: user.full_name
+        for user in (
+            (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+            if user_ids
+            else []
+        )
+    }
+    review_summaries = [
+        PatientSectionReviewSummary(
+            section_key=review.section_key,
+            content_override=review.content_override,
+            item_overrides=review.item_overrides or {},
+            deleted_items=review.deleted_items or [],
+            is_deleted=review.is_deleted,
+            is_approved=review.is_approved,
+            approved_by=users.get(review.approved_by) if review.approved_by else None,
+            approved_at=review.approved_at,
+            updated_by=users.get(review.updated_by, "Clinical user"),
+            updated_at=review.updated_at,
+        )
+        for review in section_reviews
+    ]
     return PatientChart(
         records=[
             PatientRecordSummary(
                 id=record.id,
                 encounter_id=encounter.id,
+                department=encounter.department,
                 status=record.status,
                 source_language=record.source_language,
                 structured_note=record.structured_note,
+                encounter_summary=_encounter_summary(record.structured_note),
+                captured_by=creator.full_name,
                 audio_available=bool(record.audio_storage_url),
                 created_at=record.created_at,
             )
-            for record, encounter in record_rows
+            for record, encounter, creator in record_rows
         ],
         reports=[_report_summary(report) for report in reports],
         medications=[
@@ -114,7 +189,260 @@ async def get_chart(
         discharge_summaries=await discharge_pipeline_service.list_for_patient(
             db, patient_id=patient.id
         ),
+        handovers=await handover_pipeline_service.list_for_patient(
+            db, patient_id=patient.id
+        ),
+        section_reviews=review_summaries,
+        approval_percentage=round(
+            100
+            * sum(1 for review in section_reviews if review.is_approved)
+            / len(SECTION_KEYS)
+        ),
     )
+
+
+async def _section_review(
+    db: AsyncSession,
+    *,
+    patient: Patient,
+    section_key: str,
+    current_user: CurrentUser,
+) -> PatientSectionReview:
+    review = (
+        await db.execute(
+            select(PatientSectionReview).where(
+                PatientSectionReview.patient_id == patient.id,
+                PatientSectionReview.section_key == section_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if review is None:
+        review = PatientSectionReview(
+            hospital_id=patient.hospital_id,
+            patient_id=patient.id,
+            section_key=section_key,
+            updated_by=uuid.UUID(current_user.user_id),
+        )
+        db.add(review)
+        await db.flush()
+    return review
+
+
+async def _section_summary(
+    db: AsyncSession, review: PatientSectionReview
+) -> PatientSectionReviewSummary:
+    editor = await db.get(User, review.updated_by)
+    approver = await db.get(User, review.approved_by) if review.approved_by else None
+    return PatientSectionReviewSummary(
+        section_key=review.section_key,
+        content_override=review.content_override,
+        item_overrides=review.item_overrides or {},
+        deleted_items=review.deleted_items or [],
+        is_deleted=review.is_deleted,
+        is_approved=review.is_approved,
+        approved_by=approver.full_name if approver else None,
+        approved_at=review.approved_at,
+        updated_by=editor.full_name if editor else "Clinical user",
+        updated_at=review.updated_at,
+    )
+
+
+async def edit_section(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    section_key: str,
+    payload: PatientSectionUpdateRequest,
+    current_user: CurrentUser,
+) -> PatientSectionReviewSummary:
+    patient = await _patient(db, patient_id, current_user)
+    review = await _section_review(
+        db, patient=patient, section_key=section_key, current_user=current_user
+    )
+    before = {
+        "content_override": review.content_override,
+        "is_deleted": review.is_deleted,
+    }
+    review.content_override = payload.content_override.strip() or None
+    review.is_deleted = False
+    review.updated_by = uuid.UUID(current_user.user_id)
+    await db.commit()
+    await db.refresh(review)
+    await audit_service.safe_log_event(
+        hospital_id=patient.hospital_id,
+        user_id=current_user.user_id,
+        actor_role=current_user.role,
+        action="patient_section.edit_made",
+        resource_type="patient_section",
+        resource_id=review.id,
+        patient_id=patient.id,
+        changes={
+            "before": before,
+            "after": {
+                "content_override": review.content_override,
+                "is_deleted": False,
+            },
+        },
+        event_metadata={"section_key": section_key},
+    )
+    return await _section_summary(db, review)
+
+
+def _validate_item_key(item_key: str) -> str:
+    normalized = item_key.strip().lower()
+    if (
+        not normalized
+        or len(normalized) > 80
+        or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for character in normalized)
+    ):
+        raise HTTPException(status_code=422, detail="Invalid section item")
+    return normalized
+
+
+async def edit_section_item(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    section_key: str,
+    item_key: str,
+    payload: PatientSectionItemUpdateRequest,
+    current_user: CurrentUser,
+) -> PatientSectionReviewSummary:
+    patient = await _patient(db, patient_id, current_user)
+    review = await _section_review(
+        db, patient=patient, section_key=section_key, current_user=current_user
+    )
+    key = _validate_item_key(item_key)
+    overrides = dict(review.item_overrides or {})
+    before = overrides.get(key)
+    overrides[key] = payload.content_override.strip()
+    review.item_overrides = overrides
+    review.deleted_items = [
+        value for value in (review.deleted_items or []) if value != key
+    ]
+    review.is_deleted = False
+    review.updated_by = uuid.UUID(current_user.user_id)
+    await db.commit()
+    await db.refresh(review)
+    await audit_service.safe_log_event(
+        hospital_id=patient.hospital_id,
+        user_id=current_user.user_id,
+        actor_role=current_user.role,
+        action="patient_section_item.edit_made",
+        resource_type="patient_section",
+        resource_id=review.id,
+        patient_id=patient.id,
+        changes={
+            "content": {
+                "before": before,
+                "after": overrides[key],
+            }
+        },
+        event_metadata={"section_key": section_key, "item_key": key},
+    )
+    return await _section_summary(db, review)
+
+
+async def delete_section_item(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    section_key: str,
+    item_key: str,
+    current_user: CurrentUser,
+) -> PatientSectionReviewSummary:
+    patient = await _patient(db, patient_id, current_user)
+    review = await _section_review(
+        db, patient=patient, section_key=section_key, current_user=current_user
+    )
+    if review.is_approved:
+        raise HTTPException(status_code=409, detail="Approved items cannot be deleted")
+    key = _validate_item_key(item_key)
+    deleted_items = list(review.deleted_items or [])
+    if key not in deleted_items:
+        deleted_items.append(key)
+    review.deleted_items = deleted_items
+    review.updated_by = uuid.UUID(current_user.user_id)
+    await db.commit()
+    await db.refresh(review)
+    await audit_service.safe_log_event(
+        hospital_id=patient.hospital_id,
+        user_id=current_user.user_id,
+        actor_role=current_user.role,
+        action="patient_section_item.deleted",
+        resource_type="patient_section",
+        resource_id=review.id,
+        patient_id=patient.id,
+        changes={"is_deleted": {"before": False, "after": True}},
+        event_metadata={"section_key": section_key, "item_key": key},
+    )
+    return await _section_summary(db, review)
+
+
+async def approve_section(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    section_key: str,
+    current_user: CurrentUser,
+) -> PatientSectionReviewSummary:
+    patient = await _patient(db, patient_id, current_user)
+    review = await _section_review(
+        db, patient=patient, section_key=section_key, current_user=current_user
+    )
+    if review.is_deleted:
+        raise HTTPException(status_code=409, detail="Restore the section before approval")
+    was_approved = review.is_approved
+    review.is_approved = True
+    review.approved_by = uuid.UUID(current_user.user_id)
+    review.approved_at = datetime.now(timezone.utc)
+    review.updated_by = uuid.UUID(current_user.user_id)
+    await db.commit()
+    await db.refresh(review)
+    await audit_service.safe_log_event(
+        hospital_id=patient.hospital_id,
+        user_id=current_user.user_id,
+        actor_role=current_user.role,
+        action="patient_section.approved",
+        resource_type="patient_section",
+        resource_id=review.id,
+        patient_id=patient.id,
+        changes={"is_approved": {"before": was_approved, "after": True}},
+        event_metadata={"section_key": section_key},
+    )
+    return await _section_summary(db, review)
+
+
+async def delete_section(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    section_key: str,
+    current_user: CurrentUser,
+) -> PatientSectionReviewSummary:
+    patient = await _patient(db, patient_id, current_user)
+    review = await _section_review(
+        db, patient=patient, section_key=section_key, current_user=current_user
+    )
+    if review.is_approved:
+        raise HTTPException(status_code=409, detail="Approved sections cannot be deleted")
+    was_deleted = review.is_deleted
+    review.is_deleted = True
+    review.updated_by = uuid.UUID(current_user.user_id)
+    await db.commit()
+    await db.refresh(review)
+    await audit_service.safe_log_event(
+        hospital_id=patient.hospital_id,
+        user_id=current_user.user_id,
+        actor_role=current_user.role,
+        action="patient_section.deleted",
+        resource_type="patient_section",
+        resource_id=review.id,
+        patient_id=patient.id,
+        changes={"is_deleted": {"before": was_deleted, "after": True}},
+        event_metadata={"section_key": section_key},
+    )
+    return await _section_summary(db, review)
 
 
 async def audio_access(
@@ -152,11 +480,22 @@ async def update_patient_details(
     current_user: CurrentUser,
 ) -> PatientDetailsResponse:
     patient = await _patient(db, patient_id, current_user)
+    before = {
+        "full_name": patient.full_name,
+        "phone": patient.phone,
+        "gender": patient.gender,
+    }
     patient.full_name = payload.full_name.strip()
     patient.phone = payload.phone.strip() if payload.phone else None
     patient.gender = payload.gender.strip() if payload.gender else None
     if "date_of_birth" in payload.model_fields_set:
         patient.date_of_birth = payload.date_of_birth
+    elif "age" in payload.model_fields_set:
+        patient.date_of_birth = (
+            datetime(date.today().year - payload.age, 1, 1, tzinfo=timezone.utc)
+            if payload.age is not None
+            else None
+        )
     encounter = (
         await db.execute(
             select(Encounter)
@@ -180,9 +519,40 @@ async def update_patient_details(
     encounter.ward_number = payload.ward_number.strip() if payload.ward_number else None
     encounter.bed_number = payload.bed_number.strip() if payload.bed_number else None
     await db.commit()
+    await audit_service.safe_log_event(
+        hospital_id=patient.hospital_id,
+        user_id=current_user.user_id,
+        actor_role=current_user.role,
+        action="edit.made",
+        resource_type="patient",
+        resource_id=patient.id,
+        patient_id=patient.id,
+        encounter_id=encounter.id,
+        changes={
+            "before": before,
+            "after": {
+                "full_name": patient.full_name,
+                "phone": patient.phone,
+                "gender": patient.gender,
+                "encounter_number": encounter.encounter_number,
+                "ward_number": encounter.ward_number,
+                "bed_number": encounter.bed_number,
+            },
+        },
+    )
     return PatientDetailsResponse(
         id=patient.id,
         full_name=patient.full_name,
+        age=(
+            date.today().year
+            - patient.date_of_birth.date().year
+            - (
+                (date.today().month, date.today().day)
+                < (patient.date_of_birth.date().month, patient.date_of_birth.date().day)
+            )
+            if patient.date_of_birth
+            else None
+        ),
         phone=patient.phone,
         gender=patient.gender,
         date_of_birth=patient.date_of_birth,
@@ -385,12 +755,26 @@ async def add_record(
     db.add(record)
     await db.commit()
     await db.refresh(record)
+    creator = await db.get(User, uuid.UUID(current_user.user_id))
+    await audit_service.safe_log_event(
+        hospital_id=patient.hospital_id,
+        user_id=current_user.user_id,
+        actor_role=current_user.role,
+        action=audit_events.NOTE_DRAFT_CREATED,
+        resource_type="emr_record",
+        resource_id=record.id,
+        patient_id=patient.id,
+        encounter_id=encounter.id,
+    )
     return PatientRecordSummary(
         id=record.id,
         encounter_id=encounter.id,
+        department=encounter.department,
         status=record.status,
         source_language=record.source_language,
         structured_note=record.structured_note,
+        encounter_summary=_encounter_summary(record.structured_note),
+        captured_by=creator.full_name if creator else "Clinical user",
         audio_available=False,
         created_at=record.created_at,
     )

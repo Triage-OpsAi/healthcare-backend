@@ -1,30 +1,15 @@
-"""Two-stage discharge pipeline: multilingual transcription, then summary/PDF."""
+"""Two-stage multilingual transcription and structured handover pipeline."""
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
 
 from celery import Task
 from sqlalchemy import select
 
 from app.celery_app import celery_app
 from app.db.database import AsyncSessionLocal
-from app.db.models import (
-    DischargeSummaryJob,
-    EMRRecord,
-    Encounter,
-    Hospital,
-    Patient,
-    PatientMedication,
-    PatientReport,
-)
-from app.services import (
-    audit_events,
-    audit_service,
-    clinical_file_storage_service,
-    discharge_summary_service,
-    sarvam_service,
-)
+from app.db.models import EMRRecord, Encounter, HandoverJob, Patient, PatientMedication, PatientReport
+from app.services import audit_events, audit_service, clinical_file_storage_service, handover_reasoning_service, sarvam_service
 
 _loop: asyncio.AbstractEventLoop | None = None
 
@@ -38,14 +23,14 @@ def _run(coroutine):
 
 async def _mark_failed(job_id: str, message: str) -> None:
     async with AsyncSessionLocal() as db:
-        job = await db.get(DischargeSummaryJob, uuid.UUID(job_id))
+        job = await db.get(HandoverJob, uuid.UUID(job_id))
         if job and job.status != "ready":
             job.status = "failed"
             job.error_message = message[:2000]
             await db.commit()
 
 
-class DischargeTask(Task):
+class HandoverTask(Task):
     autoretry_for = (Exception,)
     retry_backoff = True
     retry_backoff_max = 60
@@ -60,7 +45,7 @@ class DischargeTask(Task):
 
 async def _transcribe(job_id: str) -> None:
     async with AsyncSessionLocal() as db:
-        job = await db.get(DischargeSummaryJob, uuid.UUID(job_id))
+        job = await db.get(HandoverJob, uuid.UUID(job_id))
         if job is None or job.status == "ready":
             return
         if not job.translated_instructions:
@@ -69,12 +54,10 @@ async def _transcribe(job_id: str) -> None:
             await db.commit()
             await audit_service.safe_log_event(
                 hospital_id=job.hospital_id, user_id=job.created_by,
-                action="transcription.started", resource_type="discharge_summary",
+                action="transcription.started", resource_type="handover",
                 resource_id=job.id, patient_id=job.patient_id, outcome="queued",
             )
-            audio = await clinical_file_storage_service.read(
-                object_key=job.audio_object_key
-            )
+            audio = await clinical_file_storage_service.read(object_key=job.audio_object_key)
             output = await sarvam_service.transcribe_and_translate(
                 audio_bytes=audio,
                 filename=job.audio_object_key.rsplit("/", 1)[-1],
@@ -85,31 +68,30 @@ async def _transcribe(job_id: str) -> None:
             job.translated_instructions = output["translated_text"]
             await audit_service.safe_log_event(
                 hospital_id=job.hospital_id, user_id=job.created_by,
-                action=audit_events.TRANSCRIPT_GENERATED, resource_type="discharge_summary",
+                action=audit_events.TRANSCRIPT_GENERATED, resource_type="handover",
                 resource_id=job.id, patient_id=job.patient_id,
             )
             if job.source_language == "unknown":
                 await audit_service.safe_log_event(
                     hospital_id=job.hospital_id, user_id=job.created_by,
-                    action=audit_events.LANGUAGE_DETECTED, resource_type="discharge_summary",
+                    action=audit_events.LANGUAGE_DETECTED, resource_type="handover",
                     resource_id=job.id, patient_id=job.patient_id,
                     event_metadata={"language_code": "auto", "detection_mode": "automatic"},
                 )
             await audit_service.safe_log_event(
                 hospital_id=job.hospital_id, user_id=job.created_by,
-                action="translation.generated", resource_type="discharge_summary",
+                action="translation.generated", resource_type="handover",
                 resource_id=job.id, patient_id=job.patient_id,
             )
         job.status = "generating_summary"
         await db.commit()
-    generate_discharge.apply_async(args=[job_id], queue="patient_emr")
+    generate_handover.apply_async(args=[job_id], queue="patient_emr")
 
 
-async def _chart_context(db, job: DischargeSummaryJob) -> tuple[dict, Patient, Hospital]:
+async def _chart_context(db, job: HandoverJob) -> dict:
     patient = await db.get(Patient, job.patient_id)
-    hospital = await db.get(Hospital, job.hospital_id)
-    if patient is None or hospital is None:
-        raise RuntimeError("Patient or hospital is unavailable")
+    if patient is None:
+        raise RuntimeError("Patient is unavailable")
     records = (
         await db.execute(
             select(EMRRecord, Encounter)
@@ -121,10 +103,7 @@ async def _chart_context(db, job: DischargeSummaryJob) -> tuple[dict, Patient, H
     reports = (
         await db.execute(
             select(PatientReport)
-            .where(
-                PatientReport.patient_id == patient.id,
-                PatientReport.status == "approved",
-            )
+            .where(PatientReport.patient_id == patient.id, PatientReport.status == "approved")
             .order_by(PatientReport.created_at)
         )
     ).scalars().all()
@@ -135,26 +114,24 @@ async def _chart_context(db, job: DischargeSummaryJob) -> tuple[dict, Patient, H
             .order_by(PatientMedication.created_at)
         )
     ).scalars().all()
-    context = {
+    return {
         "patient": {
             "name": patient.full_name,
             "reference": patient.abha_id or str(patient.id)[:8].upper(),
             "gender": patient.gender,
             "date_of_birth": patient.date_of_birth,
         },
-        "emr_records": [
+        "encounters": [
             {
-                "date": record.created_at,
+                "captured_at": record.created_at,
                 "department": encounter.department,
-                "status": record.status,
                 "note": record.structured_note,
             }
             for record, encounter in records
         ],
-        "reports": [
+        "approved_reports": [
             {
                 "title": report.title,
-                "document_type": report.document_type,
                 "summary": report.summary,
                 "key_findings": report.key_findings or [],
             }
@@ -162,77 +139,53 @@ async def _chart_context(db, job: DischargeSummaryJob) -> tuple[dict, Patient, H
         ],
         "medications": [
             {
-                "name": medication.name,
-                "dosage": medication.dosage,
-                "frequency": medication.frequency,
-                "route": medication.route,
-                "duration": medication.duration,
-                "instructions": medication.instructions,
-                "active": medication.is_active,
+                "name": item.name,
+                "dosage": item.dosage,
+                "frequency": item.frequency,
+                "route": item.route,
+                "duration": item.duration,
+                "instructions": item.instructions,
+                "active": item.is_active,
             }
-            for medication in medications
+            for item in medications
         ],
     }
-    return context, patient, hospital
 
 
 async def _generate(job_id: str) -> None:
     async with AsyncSessionLocal() as db:
-        job = await db.get(DischargeSummaryJob, uuid.UUID(job_id))
+        job = await db.get(HandoverJob, uuid.UUID(job_id))
         if job is None or job.status == "ready":
             return
         if not job.translated_instructions:
-            raise RuntimeError("Translated discharge instructions are unavailable")
+            raise RuntimeError("Translated handover instructions are unavailable")
         job.status = "generating_summary"
         job.error_message = None
         await db.commit()
-        context, patient, hospital = await _chart_context(db, job)
-        summary = await discharge_summary_service.generate_summary(
-            chart_context=context,
+        job.summary_data = await handover_reasoning_service.generate_summary(
+            chart_context=await _chart_context(db, job),
             translated_instructions=job.translated_instructions,
         )
-        job.summary_data = summary
-        job.status = "generating_pdf"
-        await db.commit()
-        pdf = discharge_summary_service.render_pdf(
-            hospital_name=hospital.name,
-            patient_name=patient.full_name,
-            patient_reference=patient.abha_id or str(patient.id)[:8].upper(),
-            generated_at=datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC"),
-            summary=summary,
-        )
-        pdf_key = clinical_file_storage_service.discharge_pdf_key(
-            hospital_id=job.hospital_id,
-            patient_id=job.patient_id,
-            job_id=job.id,
-        )
-        await clinical_file_storage_service.save_generated(
-            object_key=pdf_key,
-            content_type="application/pdf",
-            data=pdf,
-        )
-        job.pdf_bucket_name = clinical_file_storage_service.bucket_name()
-        job.pdf_object_key = pdf_key
         job.status = "ready"
         await db.commit()
         await audit_service.safe_log_event(
             hospital_id=job.hospital_id, user_id=job.created_by,
-            action=audit_events.CLINICAL_EXTRACTION_CREATED, resource_type="discharge_summary",
+            action=audit_events.CLINICAL_EXTRACTION_CREATED, resource_type="handover",
             resource_id=job.id, patient_id=job.patient_id,
             event_metadata={"extracted_values": job.summary_data},
         )
         await audit_service.safe_log_event(
             hospital_id=job.hospital_id, user_id=job.created_by,
-            action=audit_events.NOTE_DRAFT_CREATED, resource_type="discharge_summary",
+            action=audit_events.NOTE_DRAFT_CREATED, resource_type="handover",
             resource_id=job.id, patient_id=job.patient_id,
         )
 
 
-@celery_app.task(bind=True, base=DischargeTask, name="discharge.transcribe")
-def transcribe_discharge(self, job_id: str) -> None:
+@celery_app.task(bind=True, base=HandoverTask, name="handover.transcribe")
+def transcribe_handover(self, job_id: str) -> None:
     _run(_transcribe(job_id))
 
 
-@celery_app.task(bind=True, base=DischargeTask, name="discharge.generate")
-def generate_discharge(self, job_id: str) -> None:
+@celery_app.task(bind=True, base=HandoverTask, name="handover.generate")
+def generate_handover(self, job_id: str) -> None:
     _run(_generate(job_id))

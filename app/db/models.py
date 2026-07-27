@@ -433,6 +433,39 @@ class Patient(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class PatientSectionReview(Base):
+    """Durable review state for each top-level patient EMR section."""
+
+    __tablename__ = "patient_section_reviews"
+    __table_args__ = (
+        UniqueConstraint("patient_id", "section_key", name="uq_patient_section_review"),
+        Index("ix_patient_section_reviews_hospital_patient", "hospital_id", "patient_id"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    hospital_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("hospitals.id"), nullable=False
+    )
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("patients.id"), nullable=False
+    )
+    section_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    content_override: Mapped[str | None] = mapped_column(Text)
+    item_overrides: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    deleted_items: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Encounter(Base):
     """A single visit/consultation. One encounter -> one EMR record."""
     __tablename__ = "encounters"
@@ -622,6 +655,37 @@ class DischargeSummaryJob(Base):
     )
 
 
+class HandoverJob(Base):
+    """Recorded clinician-to-clinician handover with an AI-structured SBAR draft."""
+
+    __tablename__ = "handover_jobs"
+    __table_args__ = (
+        Index("ix_handover_jobs_hospital_patient", "hospital_id", "patient_id"),
+        Index("ix_handover_jobs_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id"), nullable=False)
+    patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patients.id"), nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    handed_over_to: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    audio_bucket_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    audio_object_key: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    audio_content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    audio_file_size: Mapped[int] = mapped_column(nullable=False)
+    audio_etag: Mapped[str | None] = mapped_column(String(255))
+    source_language: Mapped[str] = mapped_column(String(10), default="unknown")
+    status: Mapped[str] = mapped_column(String(40), default="awaiting_upload")
+    raw_transcript: Mapped[str | None] = mapped_column(Text)
+    translated_instructions: Mapped[str | None] = mapped_column(Text)
+    summary_data: Mapped[dict | None] = mapped_column(JSON)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 # --------------------------------------------------------------------------
 # Medical coding (SNOMED CT / ICD-10 / drug master)
 # --------------------------------------------------------------------------
@@ -688,6 +752,8 @@ class AuditLog(Base):
     __table_args__ = (
         Index("ix_audit_logs_hospital_id", "hospital_id"),
         Index("ix_audit_logs_resource", "resource_type", "resource_id"),
+        Index("ix_audit_logs_patient_time", "patient_id", "timestamp"),
+        Index("ix_audit_logs_action_time", "action", "timestamp"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -698,8 +764,19 @@ class AuditLog(Base):
         ForeignKey("admin_organizations.id"), nullable=True, index=True
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    client_event_id: Mapped[str | None] = mapped_column(String(64), unique=True)
     action: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g. 'emr_record.read'
+    event_category: Mapped[str] = mapped_column(String(50), default="clinical", nullable=False)
+    actor_role: Mapped[str | None] = mapped_column(String(50))
     resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
     resource_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    patient_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("patients.id"))
+    encounter_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("encounters.id"))
+    outcome: Mapped[str] = mapped_column(String(20), default="success", nullable=False)
+    source: Mapped[str] = mapped_column(String(30), default="web", nullable=False)
+    request_id: Mapped[str | None] = mapped_column(String(100))
+    changes: Mapped[dict | None] = mapped_column(JSON)
+    event_metadata: Mapped[dict | None] = mapped_column("event_metadata", JSON)
     ip_address: Mapped[str | None] = mapped_column(String(50))
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -14,6 +14,7 @@ from app.api.routes_admin import (
     user_router,
 )
 from app.api.routes_auth import router as auth_router
+from app.api.routes_audit import router as audit_router
 from app.api.routes_doctor import router as doctor_router
 from app.api.routes_emr import router as emr_router
 from app.api.routes_patient_chart import router as patient_chart_router
@@ -93,6 +94,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(audit_router, prefix="/api/v1")
 app.include_router(emr_router, prefix="/api/v1")
 app.include_router(patient_chart_router, prefix="/api/v1")
 app.include_router(doctor_router, prefix="/api/v1")

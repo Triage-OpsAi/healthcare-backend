@@ -1,0 +1,4 @@
+[2026-07-26 17:33:25,905: INFO/MainProcess] Connected to rediss://default:**@driven-turtle-81174.upstash.io:6379/0
+[2026-07-26 17:33:26,332: INFO/MainProcess] mingle: searching for neighbors
+[2026-07-26 17:33:28,900: INFO/MainProcess] mingle: all alone
+[2026-07-26 17:33:31,121: INFO/MainProcess] patient-emr@DESKTOP-O79IFU7 ready.

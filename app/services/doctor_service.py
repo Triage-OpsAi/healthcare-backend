@@ -20,6 +20,7 @@ from app.db.models import (
     Hospital,
     NetworkHospitalProfile,
     Patient,
+    PatientSectionReview,
     Permission,
     RefreshToken,
     Role,
@@ -291,6 +292,21 @@ async def list_patients(
 ) -> list[PatientDashboardSummary]:
     """Return every tenant patient once, enriched with their latest EMR if present."""
     hospital_id = _hospital_id(current_user)
+    approved_counts = dict(
+        (
+            await db.execute(
+                select(
+                    PatientSectionReview.patient_id,
+                    func.count(PatientSectionReview.id),
+                )
+                .where(
+                    PatientSectionReview.hospital_id == hospital_id,
+                    PatientSectionReview.is_approved.is_(True),
+                )
+                .group_by(PatientSectionReview.patient_id)
+            )
+        ).all()
+    )
     doctor = aliased(User)
     creator = aliased(User)
     creator_role = aliased(Role)
@@ -359,6 +375,9 @@ async def list_patients(
                 status=record.status if record else "no_record",
                 created_at=patient.created_at,
                 last_visit_at=encounter.created_at if encounter else None,
+                approval_percentage=round(
+                    100 * approved_counts.get(patient.id, 0) / 8
+                ),
             )
         )
     return patients

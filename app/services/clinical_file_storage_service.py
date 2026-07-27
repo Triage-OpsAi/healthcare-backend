@@ -63,6 +63,16 @@ def discharge_pdf_key(*, hospital_id: uuid.UUID, patient_id: uuid.UUID, job_id: 
     )
 
 
+def handover_audio_key(
+    *, hospital_id: uuid.UUID, patient_id: uuid.UUID, job_id: uuid.UUID, content_type: str
+) -> str:
+    extension = AUDIO_EXTENSIONS.get(normalize_content_type(content_type), ".bin")
+    return (
+        f"handovers/{hospital_id}/{patient_id}/{date.today().isoformat()}/"
+        f"{job_id}{extension}"
+    )
+
+
 async def direct_upload(*, object_key: str, content_type: str) -> str:
     return await b2_storage_service.create_upload_url(
         object_key=object_key, content_type=normalize_content_type(content_type)

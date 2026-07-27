@@ -12,6 +12,11 @@ from app.schemas.patient_chart import (
     DischargeCreateRequest,
     DischargeSummaryItem,
     DischargeUploadResponse,
+    HandoverCompleteRequest,
+    HandoverCreateRequest,
+    HandoverRecipientUpdateRequest,
+    HandoverSummaryItem,
+    HandoverUploadResponse,
     MedicationCreateRequest,
     PatientDetailsResponse,
     PatientDetailsUpdateRequest,
@@ -19,14 +24,32 @@ from app.schemas.patient_chart import (
     PatientMedicationSummary,
     PatientRecordSummary,
     PatientReportSummary,
+    PatientSectionKey,
+    PatientSectionItemUpdateRequest,
+    PatientSectionReviewSummary,
+    PatientSectionUpdateRequest,
     ReportCompleteRequest,
     ReportCreateRequest,
     ReportUploadResponse,
 )
-from app.services import discharge_pipeline_service, patient_chart_service
+from app.schemas.doctor import ClinicalUserSummary
+from app.services import (
+    discharge_pipeline_service,
+    doctor_service,
+    handover_pipeline_service,
+    patient_chart_service,
+)
 from app.services.authorization import require_permission
 
 router = APIRouter(prefix="/patients", tags=["Patient Chart"])
+
+
+@router.get("/handover-recipients", response_model=list[ClinicalUserSummary])
+async def handover_recipients(
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await doctor_service.list_users(db, current_user)
 
 
 @router.patch("/{patient_id}", response_model=PatientDetailsResponse)
@@ -49,6 +72,104 @@ async def patient_chart(
 ):
     return await patient_chart_service.get_chart(
         db, patient_id=patient_id, current_user=current_user
+    )
+
+
+@router.patch(
+    "/{patient_id}/sections/{section_key}",
+    response_model=PatientSectionReviewSummary,
+)
+async def edit_patient_section(
+    patient_id: uuid.UUID,
+    section_key: PatientSectionKey,
+    payload: PatientSectionUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await patient_chart_service.edit_section(
+        db,
+        patient_id=patient_id,
+        section_key=section_key,
+        payload=payload,
+        current_user=current_user,
+    )
+
+
+@router.patch(
+    "/{patient_id}/sections/{section_key}/items/{item_key}",
+    response_model=PatientSectionReviewSummary,
+)
+async def edit_patient_section_item(
+    patient_id: uuid.UUID,
+    section_key: PatientSectionKey,
+    item_key: str,
+    payload: PatientSectionItemUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await patient_chart_service.edit_section_item(
+        db,
+        patient_id=patient_id,
+        section_key=section_key,
+        item_key=item_key,
+        payload=payload,
+        current_user=current_user,
+    )
+
+
+@router.delete(
+    "/{patient_id}/sections/{section_key}/items/{item_key}",
+    response_model=PatientSectionReviewSummary,
+)
+async def delete_patient_section_item(
+    patient_id: uuid.UUID,
+    section_key: PatientSectionKey,
+    item_key: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await patient_chart_service.delete_section_item(
+        db,
+        patient_id=patient_id,
+        section_key=section_key,
+        item_key=item_key,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/{patient_id}/sections/{section_key}/approve",
+    response_model=PatientSectionReviewSummary,
+)
+async def approve_patient_section(
+    patient_id: uuid.UUID,
+    section_key: PatientSectionKey,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:review")),
+):
+    return await patient_chart_service.approve_section(
+        db,
+        patient_id=patient_id,
+        section_key=section_key,
+        current_user=current_user,
+    )
+
+
+@router.delete(
+    "/{patient_id}/sections/{section_key}",
+    response_model=PatientSectionReviewSummary,
+)
+async def delete_patient_section(
+    patient_id: uuid.UUID,
+    section_key: PatientSectionKey,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await patient_chart_service.delete_section(
+        db,
+        patient_id=patient_id,
+        section_key=section_key,
+        current_user=current_user,
     )
 
 
@@ -223,5 +344,76 @@ async def discharge_pdf(
     current_user: CurrentUser = Depends(require_permission("emr:read")),
 ):
     return await discharge_pipeline_service.pdf_access(
+        db, patient_id=patient_id, job_id=job_id, current_user=current_user
+    )
+
+
+@router.post(
+    "/{patient_id}/handovers",
+    response_model=HandoverUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_handover(
+    patient_id: uuid.UUID,
+    payload: HandoverCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await handover_pipeline_service.create(
+        db, patient_id=patient_id, payload=payload, current_user=current_user
+    )
+
+
+@router.post(
+    "/{patient_id}/handovers/{job_id}/complete",
+    response_model=HandoverSummaryItem,
+)
+async def complete_handover(
+    patient_id: uuid.UUID,
+    job_id: uuid.UUID,
+    payload: HandoverCompleteRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await handover_pipeline_service.complete(
+        db,
+        patient_id=patient_id,
+        job_id=job_id,
+        etag=payload.etag,
+        current_user=current_user,
+    )
+
+
+@router.patch(
+    "/{patient_id}/handovers/{job_id}/recipient",
+    response_model=HandoverSummaryItem,
+)
+async def assign_handover_recipient(
+    patient_id: uuid.UUID,
+    job_id: uuid.UUID,
+    payload: HandoverRecipientUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await handover_pipeline_service.assign_recipient(
+        db,
+        patient_id=patient_id,
+        job_id=job_id,
+        handed_over_to=payload.handed_over_to,
+        current_user=current_user,
+    )
+
+
+@router.get(
+    "/{patient_id}/handovers/{job_id}/audio",
+    response_model=AudioAccess,
+)
+async def handover_audio(
+    patient_id: uuid.UUID,
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:read")),
+):
+    return await handover_pipeline_service.audio_access(
         db, patient_id=patient_id, job_id=job_id, current_user=current_user
     )

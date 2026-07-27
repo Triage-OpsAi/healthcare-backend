@@ -11,11 +11,13 @@ from app.celery_app import celery_app
 from app.db.database import AsyncSessionLocal
 from app.db.models import EMRRecord, Encounter, Patient, VoiceIntakeJob
 from app.services import (
+    audit_service,
     b2_storage_service,
     emr_service,
     patient_builder_service,
     sarvam_service,
 )
+from app.services import audit_events
 
 _worker_loop: asyncio.AbstractEventLoop | None = None
 
@@ -38,6 +40,7 @@ async def _mark_failed(job_id: str, message: str) -> None:
 
 class VoicePipelineTask(Task):
     autoretry_for = (Exception,)
+    dont_autoretry_for = (patient_builder_service.PatientDetailsError,)
     retry_backoff = True
     retry_backoff_max = 60
     retry_jitter = True
@@ -63,6 +66,16 @@ async def _transcribe(job_id: str) -> None:
             job.status = "transcribing"
             job.error_message = None
             await db.commit()
+            await audit_service.safe_log_event(
+                hospital_id=job.hospital_id,
+                user_id=job.created_by,
+                action="transcription.started",
+                resource_type="voice_job",
+                resource_id=job.id,
+                patient_id=job.patient_id,
+                encounter_id=job.encounter_id,
+                outcome="queued",
+            )
             audio = await b2_storage_service.download_audio(object_key=job.object_key)
             output = await sarvam_service.transcribe_and_translate(
                 audio_bytes=audio,
@@ -100,6 +113,22 @@ async def _build_patient_emr(job_id: str) -> None:
         if intake is None:
             job.status = "registering_patient"
             await db.commit()
+            common = dict(
+                hospital_id=job.hospital_id,
+                user_id=job.created_by,
+                resource_type="voice_job",
+                resource_id=job.id,
+                patient_id=job.patient_id,
+                encounter_id=job.encounter_id,
+            )
+            await audit_service.safe_log_event(action=audit_events.TRANSCRIPT_GENERATED, **common)
+            if job.language_code == "unknown":
+                await audit_service.safe_log_event(
+                    action=audit_events.LANGUAGE_DETECTED,
+                    event_metadata={"language_code": "auto", "detection_mode": "automatic"},
+                    **common,
+                )
+            await audit_service.safe_log_event(action="translation.generated", **common)
             if job.patient_id is not None:
                 intake = {
                     "clinical_note": await emr_service.structure_note(
@@ -111,6 +140,11 @@ async def _build_patient_emr(job_id: str) -> None:
                     job.translated_text
                 )
             job.extracted_intake = intake
+            await audit_service.safe_log_event(
+                action=audit_events.CLINICAL_EXTRACTION_CREATED,
+                event_metadata={"extracted_values": intake["clinical_note"]},
+                **common,
+            )
 
         current_user = CurrentUser(
             user_id=str(job.created_by),
@@ -177,6 +211,15 @@ async def _build_patient_emr(job_id: str) -> None:
         job.status = "ready"
         job.error_message = None
         await db.commit()
+        await audit_service.safe_log_event(
+            hospital_id=job.hospital_id,
+            user_id=job.created_by,
+            action=audit_events.NOTE_DRAFT_CREATED,
+            resource_type="emr_record",
+            resource_id=job.emr_record_id,
+            patient_id=job.patient_id,
+            encounter_id=job.encounter_id,
+        )
 
 
 @celery_app.task(
