@@ -513,6 +513,15 @@ jobs:
             -f compose.production.yaml \
             config --quiet
 
+          echo "Building application image..."
+
+          docker compose \
+            -f compose.production.yaml \
+            build \
+            --pull \
+            api \
+            </dev/null
+
           echo "Checking DATABASE_URL received by Docker..."
 
           docker compose \
@@ -520,6 +529,7 @@ jobs:
             run \
             --rm \
             --no-deps \
+            --no-TTY \
             api \
             python -c '
           import os
@@ -537,21 +547,17 @@ jobs:
               raise SystemExit(
                   "Docker received an invalid localhost DATABASE_URL."
               )
-          '
-
-          docker compose \
-            -f compose.production.yaml \
-            build \
-            --pull \
-            api
+          ' </dev/null
 
           docker compose \
             -f compose.production.yaml \
             run \
             --rm \
             --no-deps \
+            --no-TTY \
             api \
-            python -m scripts.database_setup --create
+            python -m scripts.database_setup --create \
+            </dev/null
 
           docker compose \
             -f compose.production.yaml \
