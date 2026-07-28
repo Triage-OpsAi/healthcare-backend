@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 
 from app.core.config import settings
-from app.services import b2_storage_service
+from app.services import s3_storage_service
 
 CLINICAL_DOCUMENT_TYPES = {
     "application/pdf": ".pdf",
@@ -74,30 +74,30 @@ def handover_audio_key(
 
 
 async def direct_upload(*, object_key: str, content_type: str) -> str:
-    return await b2_storage_service.create_upload_url(
+    return await s3_storage_service.create_upload_url(
         object_key=object_key, content_type=normalize_content_type(content_type)
     )
 
 
 async def verify(*, object_key: str, expected_size: int) -> dict:
-    return await b2_storage_service.verify_upload(
+    return await s3_storage_service.verify_upload(
         object_key=object_key, expected_size=expected_size
     )
 
 
 async def read(*, object_key: str) -> bytes:
-    return await b2_storage_service.download_object(object_key=object_key)
+    return await s3_storage_service.download_object(object_key=object_key)
 
 
 async def save_generated(*, object_key: str, content_type: str, data: bytes) -> None:
-    await b2_storage_service.upload_object(
+    await s3_storage_service.upload_object(
         object_key=object_key, content_type=content_type, data=data
     )
 
 
 async def signed_download(*, object_key: str) -> str:
-    return await b2_storage_service.create_download_url(object_key=object_key)
+    return await s3_storage_service.create_download_url(object_key=object_key)
 
 
 def bucket_name() -> str:
-    return settings.B2_BUCKET
+    return settings.AWS_S3_BUCKET

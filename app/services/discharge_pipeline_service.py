@@ -102,7 +102,7 @@ async def create(
         job_id=job.id,
         upload_url=upload_url,
         content_type=content_type,
-        expires_in=settings.B2_PRESIGN_EXPIRE_SECONDS,
+        expires_in=settings.AWS_S3_PRESIGN_EXPIRE_SECONDS,
     )
 
 
@@ -170,7 +170,7 @@ async def audio_access(
             object_key=job.audio_object_key
         ),
         content_type=job.audio_content_type,
-        expires_in=settings.B2_PRESIGN_EXPIRE_SECONDS,
+        expires_in=settings.AWS_S3_PRESIGN_EXPIRE_SECONDS,
     )
 
 
@@ -191,5 +191,5 @@ async def pdf_access(
             object_key=job.pdf_object_key
         ),
         content_type="application/pdf",
-        expires_in=settings.B2_PRESIGN_EXPIRE_SECONDS,
+        expires_in=settings.AWS_S3_PRESIGN_EXPIRE_SECONDS,
     )

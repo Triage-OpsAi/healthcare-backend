@@ -451,7 +451,7 @@ async def audio_access(
     record = await db.get(EMRRecord, record_id)
     if record is None or record.hospital_id != _hospital_id(current_user):
         raise HTTPException(status_code=404, detail="EMR record not found")
-    if not record.audio_storage_url or not record.audio_storage_url.startswith("b2://"):
+    if not record.audio_storage_url or not record.audio_storage_url.startswith("s3://"):
         raise HTTPException(status_code=404, detail="No recording is attached to this EMR")
     _scheme, _separator, location = record.audio_storage_url.partition("://")
     _bucket, _slash, object_key = location.partition("/")
@@ -468,7 +468,7 @@ async def audio_access(
     return AudioAccess(
         url=url,
         content_type=content_type or "audio/webm",
-        expires_in=settings.B2_PRESIGN_EXPIRE_SECONDS,
+        expires_in=settings.AWS_S3_PRESIGN_EXPIRE_SECONDS,
     )
 
 
@@ -580,7 +580,7 @@ async def report_access(
     return AudioAccess(
         url=await clinical_file_storage_service.signed_download(object_key=report.object_key),
         content_type=report.content_type,
-        expires_in=settings.B2_PRESIGN_EXPIRE_SECONDS,
+        expires_in=settings.AWS_S3_PRESIGN_EXPIRE_SECONDS,
     )
 
 
@@ -628,7 +628,7 @@ async def create_report(
         report_id=report.id,
         upload_url=upload_url,
         content_type=content_type,
-        expires_in=settings.B2_PRESIGN_EXPIRE_SECONDS,
+        expires_in=settings.AWS_S3_PRESIGN_EXPIRE_SECONDS,
     )
 
 

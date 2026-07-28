@@ -51,13 +51,12 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # Backblaze B2 S3-compatible storage. The endpoint is discovered from
-    # b2_authorize_account when B2_S3_ENDPOINT is left empty.
-    B2_KEY_ID: str = ""
-    B2_APPLICATION_KEY: str = ""
-    B2_BUCKET: str = ""
-    B2_S3_ENDPOINT: str = ""
-    B2_PRESIGN_EXPIRE_SECONDS: int = 900
+    # AWS S3 private object storage.
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "ap-south-1"
+    AWS_S3_BUCKET: str = ""
+    AWS_S3_PRESIGN_EXPIRE_SECONDS: int = 900
     VOICE_UPLOAD_MAX_BYTES: int = 100 * 1024 * 1024
 
     # Administration application

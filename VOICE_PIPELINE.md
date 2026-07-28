@@ -1,25 +1,24 @@
 # Asynchronous voice pipeline
 
-Voice intake uses a private Backblaze B2 bucket and two independent Celery
+Voice intake uses a private AWS S3 bucket and two independent Celery
 queues. The browser uploads directly with a short-lived presigned PUT URL, so
 audio bytes never pass through the FastAPI process.
 
 Required environment variables:
 
 ```text
-B2_KEY_ID=
-B2_APPLICATION_KEY=
-B2_BUCKET=emr-records
-B2_S3_ENDPOINT=
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=ap-south-1
+AWS_S3_BUCKET=emr-records
 REDIS_URL=rediss://default:replace-me@your-database.upstash.io:6379/0?ssl_cert_reqs=required
 ```
 
-`B2_S3_ENDPOINT` is optional and is discovered through Backblaze authorization
-when empty. Use the native Upstash Redis TLS URL, not the REST URL/token.
+Use the native Upstash Redis TLS URL, not the REST URL/token.
 Configure bucket CORS once, then start the complete API and worker stack:
 
 ```powershell
-.\.venv\Scripts\python.exe -m scripts.configure_b2_cors
+.\.venv\Scripts\python.exe -m scripts.configure_s3_cors
 .\scripts\start_all.ps1
 ```
 

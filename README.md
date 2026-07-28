@@ -23,7 +23,7 @@ are processed in the background.
 | Redis-compatible broker | Routes durable background tasks | Upstash TLS URL configured by `REDIS_URL` |
 | Voice transcription worker (worker 1) | Voice intake/discharge audio, Sarvam transcription and English translation | `.\scripts\start_transcription_worker.ps1` |
 | Patient/EMR reasoning worker (worker 2) | Patient creation, report reasoning, discharge reasoning and PDF generation | `.\scripts\start_patient_emr_worker.ps1` |
-| Backblaze B2 | Private source audio, clinical documents and generated discharge PDFs | S3-compatible bucket configured with `B2_*` |
+| AWS S3 | Private source audio, clinical documents and generated discharge PDFs | Private bucket configured with `AWS_*` |
 | Sarvam AI | Auto-detected Indian-language speech-to-text and English translation | External API configured by `SARVAM_API_KEY` |
 | OpenAI Responses API | Structured patient intake, document summaries and discharge summaries | External API configured by `OPENAI_API_KEY` |
 
@@ -31,7 +31,7 @@ are processed in the background.
 
 | Module | Responsibility |
 |---|---|
-| `b2_storage_service.py` | Low-level Backblaze S3 client and signed URLs |
+| `s3_storage_service.py` | Low-level AWS S3 client and signed URLs |
 | `clinical_file_storage_service.py` | The only clinical-file upload/read/generated-file storage boundary |
 | `report_reasoning_service.py` | PDF, Word and image report quality checks and structured summaries |
 | `discharge_pipeline_service.py` | Durable discharge upload state and signed listen/download access |
@@ -59,7 +59,7 @@ task types. Run the same verification independently with:
 ```
 
 Clinical report uploads accept PDF, `.doc`, `.docx`, JPEG, PNG and WEBP. Files
-go directly from the browser to private Backblaze storage; the API only issues
+go directly from the browser to private AWS S3 storage; the API only issues
 and verifies short-lived signed URLs.
 
 ## 1. Getting your Sarvam AI API key

@@ -18,7 +18,7 @@ from app.schemas.emr import (
     VoiceJobSummary,
     VoiceJobUploadResponse,
 )
-from app.services import b2_storage_service, patient_builder_service
+from app.services import patient_builder_service, s3_storage_service
 from app.services.sarvam_service import SUPPORTED_LANGUAGES, normalize_audio_content_type
 
 ALLOWED_AUDIO_TYPES = {
@@ -71,7 +71,7 @@ async def create_job(
         id=job_id,
         hospital_id=hospital_id,
         created_by=uuid.UUID(current_user.user_id),
-        bucket_name=settings.B2_BUCKET,
+        bucket_name=settings.AWS_S3_BUCKET,
         object_key=object_key,
         content_type=content_type,
         file_size=payload.file_size,
@@ -81,10 +81,10 @@ async def create_job(
         status="awaiting_upload",
     )
     try:
-        upload_url = await b2_storage_service.create_upload_url(
+        upload_url = await s3_storage_service.create_upload_url(
             object_key=object_key, content_type=content_type
         )
-    except b2_storage_service.B2ConfigurationError as exc:
+    except s3_storage_service.S3ConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Voice storage is not configured.",
@@ -101,7 +101,7 @@ async def create_job(
         upload_url=upload_url,
         object_key=object_key,
         content_type=content_type,
-        expires_in=settings.B2_PRESIGN_EXPIRE_SECONDS,
+        expires_in=settings.AWS_S3_PRESIGN_EXPIRE_SECONDS,
     )
 
 
@@ -118,7 +118,7 @@ async def complete_job(
     if job.status != "awaiting_upload":
         return job
     try:
-        metadata = await b2_storage_service.verify_upload(
+        metadata = await s3_storage_service.verify_upload(
             object_key=job.object_key, expected_size=job.file_size
         )
     except ValueError as exc:

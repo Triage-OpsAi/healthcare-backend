@@ -218,7 +218,7 @@ Claude must not assume any of the following already exists:
 - Schema creation currently uses `Base.metadata.create_all()`.
 - `/healthz` confirms only that the API process is running; it is not a
   database/Redis readiness probe.
-- The object-storage implementation is specifically coupled to Backblaze B2.
+- The object-storage implementation uses AWS S3 with presigned URLs.
 - There is no CloudWatch queue-depth publisher for scaling Redis-backed workers.
 - There are no production dashboards, alerts, runbooks, or documented rollback
   automation.
@@ -278,20 +278,14 @@ application revisions can coexist during rolling deployments.
 
 ### 6.3 Object storage
 
-The current service uses boto3 but is not a generic S3 adapter:
+The current service uses boto3 with AWS S3 presigned URLs and requires
+`AWS_REGION` and `AWS_S3_BUCKET`. Local development can supply
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
 
-- It requires `B2_KEY_ID`, `B2_APPLICATION_KEY`, and `B2_BUCKET`.
-- It calls Backblaze authorization when `B2_S3_ENDPOINT` is absent.
-- It accepts only endpoints ending in `.backblazeb2.com`.
-- It supplies static object-store credentials.
-
-For the recommended AWS deployment, refactor this boundary to support an
-`OBJECT_STORAGE_PROVIDER` setting with at least `b2` and `s3` implementations.
-
-The S3 implementation should:
+For production, the S3 implementation should:
 
 - Use the ECS task IAM role and the default boto3 credential provider chain.
-- Use `AWS_REGION` and `S3_BUCKET`.
+- Use `AWS_REGION` and `AWS_S3_BUCKET`.
 - Avoid static AWS access keys.
 - Generate short-lived presigned PUT and GET URLs.
 - Verify content length and, where feasible, content type/checksum.
@@ -534,7 +528,7 @@ Inject non-secret values through ordinary ECS environment variables.
 - `SARVAM_API_KEY`
 - `OPENAI_API_KEY`
 - SMTP password or SES SMTP credentials, if used
-- B2 credentials only while the B2 provider remains enabled
+- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` only when an IAM role is unavailable
 
 ### Non-secret configuration
 
@@ -914,7 +908,7 @@ When asked to implement this deployment, Claude should work in this order:
    object upload.
 4. Introduce environment-driven database pool sizing.
 5. Add Alembic and a reviewed baseline migration.
-6. Generalize the B2 storage boundary and implement the IAM-based S3 provider.
+6. Replace static S3 credentials with an IAM task role in production.
 7. Add structured safe logging and correlation IDs.
 8. Add Terraform for staging using the architecture above.
 9. Add ECS task definitions for API, transcription worker, reasoning worker,

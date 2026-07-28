@@ -12,10 +12,10 @@ from app.db.database import AsyncSessionLocal
 from app.db.models import EMRRecord, Encounter, Patient, VoiceIntakeJob
 from app.services import (
     audit_service,
-    b2_storage_service,
     emr_service,
     patient_builder_service,
     sarvam_service,
+    s3_storage_service,
 )
 from app.services import audit_events
 
@@ -76,7 +76,7 @@ async def _transcribe(job_id: str) -> None:
                 encounter_id=job.encounter_id,
                 outcome="queued",
             )
-            audio = await b2_storage_service.download_audio(object_key=job.object_key)
+            audio = await s3_storage_service.download_audio(object_key=job.object_key)
             output = await sarvam_service.transcribe_and_translate(
                 audio_bytes=audio,
                 filename=job.object_key.rsplit("/", 1)[-1],
@@ -193,7 +193,7 @@ async def _build_patient_emr(job_id: str) -> None:
                 hospital_id=job.hospital_id,
                 encounter_id=job.encounter_id,
                 source_language=job.language_code,
-                audio_storage_url=f"b2://{job.bucket_name}/{job.object_key}",
+                audio_storage_url=f"s3://{job.bucket_name}/{job.object_key}",
                 raw_transcript=job.raw_transcript,
                 translated_text=job.translated_text,
                 structured_note=intake["clinical_note"],
