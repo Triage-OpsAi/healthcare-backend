@@ -131,6 +131,7 @@ jobs:
           set -euo pipefail
 
           python3 - <<'PY'
+          import json
           import os
           from pathlib import Path
           from urllib.parse import urlsplit
@@ -179,6 +180,48 @@ jobs:
               raise SystemExit(
                   "DATABASE_URL points to localhost or has no valid hostname."
               )
+
+          configured_cors = os.environ.get("CORS_ORIGINS", "").strip()
+
+          if configured_cors:
+              try:
+                  cors_origins = json.loads(configured_cors)
+              except json.JSONDecodeError as error:
+                  raise SystemExit(
+                      f"CORS_ORIGINS must be a valid JSON array: {error}"
+                  ) from error
+          else:
+              cors_origins = []
+
+          if (
+              not isinstance(cors_origins, list)
+              or not all(
+                  isinstance(origin, str) and origin.strip()
+                  for origin in cors_origins
+              )
+          ):
+              raise SystemExit(
+                  "CORS_ORIGINS must be a JSON array of non-empty strings."
+              )
+
+          required_cors_origins = [
+              "http://localhost:3000",
+              "http://127.0.0.1:3000",
+              "http://localhost:5173",
+              "http://127.0.0.1:5173",
+              "http://localhost:8081",
+              "http://127.0.0.1:8081",
+              "https://healthcare.triage-ops.com",
+          ]
+
+          for origin in required_cors_origins:
+              if origin not in cors_origins:
+                  cors_origins.append(origin)
+
+          cors_origins_json = json.dumps(
+              cors_origins,
+              separators=(",", ":"),
+          )
 
           values = {
               "DATABASE_URL": database_url,
@@ -245,18 +288,7 @@ jobs:
                   "DOCTOR_FRONTEND_URL",
                   "",
               ),
-              "CORS_ORIGINS": (
-                  os.environ.get("CORS_ORIGINS")
-                  or (
-                      '["http://localhost:3000",'
-                      '"http://127.0.0.1:3000",'
-                      '"http://localhost:5173",'
-                      '"http://127.0.0.1:5173",'
-                      '"http://localhost:8081",'
-                      '"http://127.0.0.1:8081",'
-                      '"https://healthcare.triage-ops.com"]'
-                  )
-              ),
+              "CORS_ORIGINS": cors_origins_json,
 
               "API_BIND_ADDRESS": (
                   os.environ.get("API_BIND_ADDRESS")
