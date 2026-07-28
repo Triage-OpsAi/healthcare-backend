@@ -116,14 +116,14 @@ jobs:
 
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          AWS_S3_BUCKET: ${{ vars.AWS_S3_BUCKET }}
-          AWS_S3_PRESIGN_EXPIRE_SECONDS: ${{ vars.AWS_S3_PRESIGN_EXPIRE_SECONDS }}
+          AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION }}
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET || vars.AWS_S3_BUCKET }}
+          AWS_S3_PRESIGN_EXPIRE_SECONDS: ${{ secrets.AWS_S3_PRESIGN_EXPIRE_SECONDS || vars.AWS_S3_PRESIGN_EXPIRE_SECONDS }}
           VOICE_UPLOAD_MAX_BYTES: ${{ vars.VOICE_UPLOAD_MAX_BYTES }}
 
           FRONTEND_URL: ${{ vars.FRONTEND_URL }}
           DOCTOR_FRONTEND_URL: ${{ vars.DOCTOR_FRONTEND_URL }}
-          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS || vars.CORS_ORIGINS }}
 
           API_BIND_ADDRESS: ${{ vars.API_BIND_ADDRESS }}
           API_PORT: ${{ vars.API_PORT }}
