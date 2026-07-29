@@ -1,5 +1,6 @@
 """Create, verify, enqueue, and report direct-upload voice jobs."""
 
+import logging
 import re
 import uuid
 from datetime import date
@@ -20,6 +21,8 @@ from app.schemas.emr import (
 )
 from app.services import patient_builder_service, s3_storage_service
 from app.services.sarvam_service import SUPPORTED_LANGUAGES, normalize_audio_content_type
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_AUDIO_TYPES = {
     "audio/webm", "video/webm", "audio/mp4", "audio/x-m4a", "audio/mpeg",
@@ -115,7 +118,11 @@ async def complete_job(
     job = await db.get(VoiceIntakeJob, job_id)
     if job is None or job.hospital_id != _hospital_id(current_user):
         raise HTTPException(status_code=404, detail="Voice job not found")
-    if job.status != "awaiting_upload":
+    retrying_queue_failure = (
+        job.status == "failed"
+        and job.error_message == "Processing queue is unavailable"
+    )
+    if job.status != "awaiting_upload" and not retrying_queue_failure:
         return job
     try:
         metadata = await s3_storage_service.verify_upload(
@@ -130,15 +137,19 @@ async def complete_job(
         ) from exc
     job.etag = (etag or metadata.get("ETag") or "").strip('"') or None
     job.status = "queued"
+    job.error_message = None
     await db.commit()
     try:
         celery_app.send_task(
             "voice.transcribe", args=[str(job.id)], queue="voice_transcription"
         )
     except Exception as exc:
-        job.status = "failed"
+        # The upload is durable in S3. Keep this failure retryable so the same
+        # recording can be enqueued after a transient broker outage.
+        job.status = "awaiting_upload"
         job.error_message = "Processing queue is unavailable"
         await db.commit()
+        logger.exception("Unable to enqueue voice job %s", job.id)
         raise HTTPException(status_code=503, detail="Processing queue unavailable") from exc
     return job
 

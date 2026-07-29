@@ -690,6 +690,79 @@ jobs:
             exit 1
           fi
 
+          echo "Checking Redis broker connectivity from the API..."
+
+          docker compose \
+            -f compose.production.yaml \
+            exec \
+            --no-TTY \
+            api \
+            python -c '
+          from app.celery_app import celery_app
+
+          with celery_app.connection_for_write() as connection:
+              connection.ensure_connection(
+                  max_retries=3,
+                  interval_start=1,
+                  interval_step=1,
+                  interval_max=3,
+              )
+
+          print("Redis broker connection successful.")
+          ' </dev/null
+
+          echo "Checking Celery worker responses..."
+
+          worker_ping_json="$(
+            docker compose \
+              -f compose.production.yaml \
+              exec \
+              --no-TTY \
+              api \
+              celery \
+              -A app.celery_app.celery_app \
+              inspect \
+              ping \
+              --json \
+              --timeout=10
+          )"
+
+          if ! WORKER_PING_JSON="$worker_ping_json" python3 - <<'PY'
+          import json
+          import os
+
+          responses = json.loads(os.environ["WORKER_PING_JSON"])
+          responding = {
+              name
+              for name, response in responses.items()
+              if response == {"ok": "pong"}
+          }
+          required_prefixes = ("transcription@", "patient-emr@")
+          missing = [
+              prefix
+              for prefix in required_prefixes
+              if not any(name.startswith(prefix) for name in responding)
+          ]
+
+          print("Responding Celery workers:", ", ".join(sorted(responding)))
+
+          if missing:
+              raise SystemExit(
+                  "Missing Celery worker responses: " + ", ".join(missing)
+              )
+          PY
+          then
+            docker compose \
+              -f compose.production.yaml \
+              logs \
+              --tail=200 \
+              reasoning-worker \
+              transcription-worker
+
+            echo "One or more Celery workers did not answer ping." >&2
+            exit 1
+          fi
+
           ln -sfn "$release_dir" "$deploy_root/current"
           rm -f "$archive_path"
 
