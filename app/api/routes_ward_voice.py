@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser
 from app.db.database import get_db
 from app.schemas.ward_voice import (
-    CloseChartRequest, ConfirmCaptureRequest, CountersignSummary, FluidChartResponse,
+    BedSummary, CloseChartRequest, ConfirmCaptureRequest, CountersignSummary, FluidChartResponse,
     FluidEntryCreate, IVInfusionCreate, TaskUpdate, VoiceCaptureComplete,
     VoiceCaptureCreate, VoiceCaptureResult, VoiceCaptureUpload, WardCard, WardVoiceOverview,
 )
@@ -33,6 +33,15 @@ async def overview(
     user: CurrentUser = Depends(require_any_permission("emr:read", "emr:create")),
 ):
     return await ward_voice_service.overview(db, user, ward_id)
+
+
+@router.get("/wards/{ward_id}/patients", response_model=list[BedSummary])
+async def ward_patients(
+    ward_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_any_permission("emr:read", "emr:create")),
+):
+    return await ward_voice_service.list_ward_patients(db, user, ward_id)
 
 
 @router.patch("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)

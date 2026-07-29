@@ -1,4 +1,5 @@
 """Tenant-scoped Ward Voice business logic and deterministic chart arithmetic."""
+import re
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -95,6 +96,50 @@ async def list_wards(db: AsyncSession, user: CurrentUser) -> list[dict]:
     return [
         {"id": ward.id, "name": ward.name, "code": ward.code, "patient_count": count}
         for ward, count in rows
+    ]
+
+
+async def list_ward_patients(
+    db: AsyncSession,
+    user: CurrentUser,
+    ward_id: uuid.UUID,
+) -> list[dict]:
+    hospital_id = _hospital_id(user)
+    ward = await db.get(Ward, ward_id)
+    if ward is None or ward.hospital_id != hospital_id or not ward.is_active:
+        raise HTTPException(status_code=404, detail="Ward not found")
+    nurse = aliased(User)
+    rows = (
+        await db.execute(
+            select(Bed, Patient, nurse)
+            .join(Patient, Patient.id == Bed.patient_id)
+            .outerjoin(nurse, nurse.id == Bed.assigned_nurse_id)
+            .where(
+                Bed.hospital_id == hospital_id,
+                Bed.ward_id == ward.id,
+                Bed.is_active.is_(True),
+                Bed.patient_id.is_not(None),
+            )
+            .order_by(Bed.bed_number)
+        )
+    ).all()
+    return [
+        {
+            "id": bed.id,
+            "bed_number": bed.bed_number,
+            "patient_id": patient.id,
+            "patient_name": patient.full_name,
+            "patient_age": _age(patient),
+            "protocol": bed.protocol,
+            "nurse_name": assigned_nurse.full_name if assigned_nurse else None,
+            "last_entry_at": None,
+            "next_due_at": None,
+            "fluid_balance_ml": 0,
+            "completed_tasks": 0,
+            "total_tasks": 0,
+            "status": "assigned",
+        }
+        for bed, patient, assigned_nurse in rows
     ]
 
 
@@ -331,6 +376,19 @@ def _capture_result(capture: VoiceCapture) -> dict:
     }
 
 
+def normalize_confirmed_fluid_ml(value_numeric, value_text: str | None, unit: str | None) -> int | None:
+    value = float(value_numeric) if value_numeric is not None else None
+    text = f"{value_text or ''} {unit or ''}".strip().lower()
+    if value is None:
+        match = re.search(r"(?<!\d)(\d+(?:\.\d+)?)", text)
+        if not match:
+            return None
+        value = float(match.group(1))
+    if re.search(r"\b(?:l|ltr|litre|liter|litres|liters)\b", text):
+        value *= 1000
+    return round(value)
+
+
 async def complete_capture(db: AsyncSession, capture_id: uuid.UUID, etag: str | None, user: CurrentUser) -> dict:
     capture = await db.get(VoiceCapture, capture_id)
     if capture is None or capture.hospital_id != _hospital_id(user):
@@ -395,13 +453,31 @@ async def confirm_capture(db: AsyncSession, capture_id: uuid.UUID, payload: Conf
         observation.confirmed_at = now
         observation.requires_countersign = item.requires_countersign
         db.add(observation)
-        fluid_map = {"urine_output": ("output", "urine"), "oral_intake": ("intake", "oral"), "vomit": ("output", "vomit"), "drainage": ("output", "drainage")}
-        if item.observation_type in fluid_map and item.value_numeric is not None:
-            direction, category = fluid_map[item.observation_type]
+        fluid_map = {
+            "urine_output": ("output", "urine"),
+            "fluid_output": ("output", "other"),
+            "oral_intake": ("intake", "oral"),
+            "vomit": ("output", "vomit"),
+            "drainage": ("output", "drainage"),
+        }
+        fluid_kind = fluid_map.get(item.observation_type)
+        if (
+            fluid_kind is None
+            and item.observation_type == "note"
+            and "output" in (item.value_text or "").lower()
+        ):
+            fluid_kind = ("output", "other")
+        amount_ml = normalize_confirmed_fluid_ml(
+            item.value_numeric,
+            item.value_text,
+            item.unit,
+        )
+        if fluid_kind and amount_ml is not None:
+            direction, category = fluid_kind
             db.add(FluidEntry(
                 hospital_id=capture.hospital_id, ward_id=capture.ward_id, bed_id=capture.bed_id,
                 patient_id=capture.patient_id, capture_id=capture.id, direction=direction,
-                category=category, amount_ml=round(item.value_numeric), source="voice",
+                category=category, amount_ml=amount_ml, source="voice",
                 occurred_at=now, recorded_by=_user_id(user),
             ))
     capture.status = "confirmed"
