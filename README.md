@@ -20,7 +20,7 @@ are processed in the background.
 | Doctor portal | Patient dashboard, chart, uploads, recording and downloads | `npm run dev` in `doctor-portal` (`http://localhost:3000`) |
 | FastAPI clinical API | Authentication, tenant checks and job lifecycle endpoints | `.\scripts\start_api.ps1` (`http://127.0.0.1:8000`) |
 | PostgreSQL | Durable patients, EMRs, reports, medications and job state | Configured by `DATABASE_URL` |
-| Redis-compatible broker | Routes durable background tasks | Upstash TLS URL configured by `REDIS_URL` |
+| Redis-compatible broker | Routes durable background tasks | Private persistent Redis in production Compose; `REDIS_URL` for local/external brokers |
 | Voice transcription worker (worker 1) | Voice intake/discharge audio, Sarvam transcription and English translation | `.\scripts\start_transcription_worker.ps1` |
 | Patient/EMR reasoning worker (worker 2) | Patient creation, report reasoning, discharge reasoning and PDF generation | `.\scripts\start_patient_emr_worker.ps1` |
 | AWS S3 | Private source audio, clinical documents and generated discharge PDFs | Private bucket configured with `AWS_*` |

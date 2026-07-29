@@ -671,6 +671,7 @@ jobs:
           expected_services="$(
             printf '%s\n' \
               api \
+              redis \
               reasoning-worker \
               transcription-worker |
               sort

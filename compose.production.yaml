@@ -1,6 +1,29 @@
 name: meridian-emr
 
 services:
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    init: true
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    stop_grace_period: 30s
+
   api:
     build:
       context: .
@@ -8,6 +31,11 @@ services:
     image: meridian-emr-backend:${IMAGE_TAG:-latest}
     env_file:
       - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     init: true
     ports:
@@ -28,6 +56,11 @@ services:
     image: meridian-emr-backend:${IMAGE_TAG:-latest}
     env_file:
       - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     init: true
     command:
@@ -46,6 +79,11 @@ services:
     image: meridian-emr-backend:${IMAGE_TAG:-latest}
     env_file:
       - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     init: true
     command:
@@ -59,3 +97,6 @@ services:
       - --hostname=transcription@%h
       - --concurrency=1
     stop_grace_period: 60s
+
+volumes:
+  redis-data:

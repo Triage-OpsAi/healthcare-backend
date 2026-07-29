@@ -14,7 +14,9 @@ AWS_S3_BUCKET=emr-records
 REDIS_URL=rediss://default:replace-me@your-database.upstash.io:6379/0?ssl_cert_reqs=required
 ```
 
-Use the native Upstash Redis TLS URL, not the REST URL/token.
+For local development with Upstash, use its native Redis TLS URL, not the REST
+URL/token. Production Compose overrides `REDIS_URL` with its private persistent
+Redis service so queue availability does not depend on an external request quota.
 Configure bucket CORS once, then start the complete API and worker stack:
 
 ```powershell
