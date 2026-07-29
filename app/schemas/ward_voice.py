@@ -45,6 +45,13 @@ class KPI(BaseModel):
     on_time_percentage: int
 
 
+class WardCard(BaseModel):
+    id: uuid.UUID
+    name: str
+    code: str
+    patient_count: int
+
+
 class ComplianceSummary(BaseModel):
     on_time_percentage: int
     closed_by_08_percentage: int

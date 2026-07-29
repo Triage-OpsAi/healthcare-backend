@@ -10,12 +10,20 @@ from app.db.database import get_db
 from app.schemas.ward_voice import (
     CloseChartRequest, ConfirmCaptureRequest, CountersignSummary, FluidChartResponse,
     FluidEntryCreate, IVInfusionCreate, TaskUpdate, VoiceCaptureComplete,
-    VoiceCaptureCreate, VoiceCaptureResult, VoiceCaptureUpload, WardVoiceOverview,
+    VoiceCaptureCreate, VoiceCaptureResult, VoiceCaptureUpload, WardCard, WardVoiceOverview,
 )
 from app.services import ward_voice_service
 from app.services.authorization import require_any_permission, require_permission
 
 router = APIRouter(prefix="/ward-voice", tags=["Ward Voice"])
+
+
+@router.get("/wards", response_model=list[WardCard])
+async def wards(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_any_permission("emr:read", "emr:create")),
+):
+    return await ward_voice_service.list_wards(db, user)
 
 
 @router.get("/overview", response_model=WardVoiceOverview)

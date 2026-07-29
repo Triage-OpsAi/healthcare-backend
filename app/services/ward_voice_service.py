@@ -73,6 +73,109 @@ async def _assert_chart_open(db: AsyncSession, patient_id: uuid.UUID, chart_date
         raise HTTPException(status_code=409, detail="This fluid chart is closed and cannot be overwritten")
 
 
+async def list_wards(db: AsyncSession, user: CurrentUser) -> list[dict]:
+    rows = (
+        await db.execute(
+            select(Ward, func.count(Bed.id))
+            .outerjoin(
+                Bed,
+                (Bed.ward_id == Ward.id)
+                & Bed.is_active.is_(True)
+                & Bed.patient_id.is_not(None),
+            )
+            .where(
+                Ward.hospital_id == _hospital_id(user),
+                Ward.is_active.is_(True),
+            )
+            .group_by(Ward.id)
+            .having(func.count(Bed.id) > 0)
+            .order_by(Ward.name)
+        )
+    ).all()
+    return [
+        {"id": ward.id, "name": ward.name, "code": ward.code, "patient_count": count}
+        for ward, count in rows
+    ]
+
+
+async def sync_patient_assignment(
+    db: AsyncSession,
+    *,
+    encounter: Encounter,
+    user: CurrentUser,
+) -> None:
+    hospital_id = _hospital_id(user)
+    current_bed = await db.scalar(
+        select(Bed).where(
+            Bed.hospital_id == hospital_id,
+            Bed.patient_id == encounter.patient_id,
+            Bed.is_active.is_(True),
+        )
+    )
+    ward_value = (encounter.ward_number or "").strip()
+    bed_value = (encounter.bed_number or "").strip()
+    if not ward_value or not bed_value:
+        if current_bed:
+            current_bed.is_active = False
+            await _audit(
+                db, user, "bed.unassigned", "ward_bed", current_bed.id,
+                encounter.patient_id,
+            )
+        return
+
+    ward = await db.scalar(
+        select(Ward).where(
+            Ward.hospital_id == hospital_id,
+            func.lower(Ward.code) == ward_value.lower(),
+        )
+    )
+    if ward is None:
+        ward = Ward(
+            hospital_id=hospital_id,
+            name=ward_value,
+            code=ward_value,
+            is_active=True,
+        )
+        db.add(ward)
+        await db.flush()
+    collision = await db.scalar(
+        select(Bed).where(
+            Bed.ward_id == ward.id,
+            func.lower(Bed.bed_number) == bed_value.lower(),
+            Bed.is_active.is_(True),
+            Bed.patient_id != encounter.patient_id,
+        )
+    )
+    if collision:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bed {bed_value} is already assigned to another patient in {ward.name}",
+        )
+    if current_bed:
+        current_bed.ward_id = ward.id
+        current_bed.bed_number = bed_value
+        current_bed.encounter_id = encounter.id
+        current_bed.is_active = True
+        bed = current_bed
+    else:
+        bed = Bed(
+            hospital_id=hospital_id,
+            ward_id=ward.id,
+            bed_number=bed_value,
+            patient_id=encounter.patient_id,
+            encounter_id=encounter.id,
+            assigned_nurse_id=_user_id(user),
+            protocol=encounter.department or "Ward observation",
+            is_active=True,
+        )
+        db.add(bed)
+        await db.flush()
+    await _audit(
+        db, user, "bed.assigned", "ward_bed", bed.id, encounter.patient_id,
+        {"ward": ward_value, "bed": bed_value},
+    )
+
+
 async def overview(db: AsyncSession, user: CurrentUser, ward_id: uuid.UUID | None = None) -> dict:
     hospital_id = _hospital_id(user)
     ward = await db.get(Ward, ward_id) if ward_id else await db.scalar(
@@ -124,10 +227,20 @@ async def overview(db: AsyncSession, user: CurrentUser, ward_id: uuid.UUID | Non
     beds = []
     handover = []
     day_start = datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
+    entries_by_bed: dict[uuid.UUID, list[FluidEntry]] = {}
+    if bed_rows:
+        ward_entries = (
+            await db.scalars(
+                select(FluidEntry).where(
+                    FluidEntry.bed_id.in_([bed.id for bed, *_ in bed_rows]),
+                    FluidEntry.occurred_at >= day_start,
+                )
+            )
+        ).all()
+        for entry in ward_entries:
+            entries_by_bed.setdefault(entry.bed_id, []).append(entry)
     for bed, patient, assigned_nurse in bed_rows:
-        entries = (await db.scalars(select(FluidEntry).where(
-            FluidEntry.bed_id == bed.id, FluidEntry.occurred_at >= day_start
-        ))).all()
+        entries = entries_by_bed.get(bed.id, [])
         intake = sum(entry.amount_ml for entry in entries if entry.direction == "intake")
         output = sum(entry.amount_ml for entry in entries if entry.direction == "output")
         bed_tasks = [task for task, row_bed, *_ in task_rows if row_bed.id == bed.id]

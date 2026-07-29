@@ -40,6 +40,7 @@ from app.services import (
     clinical_file_storage_service,
     discharge_pipeline_service,
     handover_pipeline_service,
+    ward_voice_service,
 )
 
 SECTION_KEYS = (
@@ -518,6 +519,12 @@ async def update_patient_details(
     encounter.encounter_number = payload.encounter_number.strip() if payload.encounter_number else None
     encounter.ward_number = payload.ward_number.strip() if payload.ward_number else None
     encounter.bed_number = payload.bed_number.strip() if payload.bed_number else None
+    await db.flush()
+    await ward_voice_service.sync_patient_assignment(
+        db,
+        encounter=encounter,
+        user=current_user,
+    )
     await db.commit()
     await audit_service.safe_log_event(
         hospital_id=patient.hospital_id,
