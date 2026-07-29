@@ -33,6 +33,14 @@ class LoginRequest(BaseModel):
     )
 
 
+class ClinicalHospitalCodeRequest(BaseModel):
+    email: EmailStr
+
+
+class ClinicalHospitalCodeResponse(BaseModel):
+    hospital_code: str
+
+
 class ClinicalLoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1)

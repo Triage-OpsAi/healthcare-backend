@@ -6,6 +6,8 @@ from app.schemas.auth import (
     AcceptInvitationRequest,
     AcceptInvitationResponse,
     ClinicalLoginRequest,
+    ClinicalHospitalCodeRequest,
+    ClinicalHospitalCodeResponse,
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
@@ -70,6 +72,35 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)):
     except auth_service.AuthError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.post(
+    "/clinical/hospital-code",
+    response_model=ClinicalHospitalCodeResponse,
+    summary="Find a clinical user's hospital code",
+    description=(
+        "Looks up the single active hospital workspace associated with a clinical "
+        "user's work email."
+    ),
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": "No unique active hospital workspace was found.",
+        }
+    },
+    operation_id="clinical_hospital_code",
+)
+async def clinical_hospital_code(
+    payload: ClinicalHospitalCodeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        hospital_code = await auth_service.find_clinical_hospital_code(
+            db, email=payload.email
+        )
+    except auth_service.AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return ClinicalHospitalCodeResponse(hospital_code=hospital_code)
 
 
 @router.post(

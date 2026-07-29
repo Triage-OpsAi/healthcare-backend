@@ -100,6 +100,27 @@ async def authenticate_admin_user(
     return user
 
 
+async def find_clinical_hospital_code(db: AsyncSession, *, email: str) -> str:
+    result = await db.execute(
+        select(Hospital.code)
+        .join(User, User.hospital_id == Hospital.id)
+        .where(
+            func.lower(User.email) == email.lower(),
+            User.admin_organization_id.is_(None),
+            User.is_active.is_(True),
+            Hospital.is_active.is_(True),
+        )
+        .distinct()
+    )
+    hospital_codes = result.scalars().all()
+
+    # An email can belong to more than one tenant. Do not guess which workspace
+    # the user intends to access when the result is ambiguous.
+    if len(hospital_codes) != 1:
+        raise AuthError("No unique active hospital workspace was found for this email")
+    return hospital_codes[0]
+
+
 async def authenticate_clinical_user(
     db: AsyncSession, *, email: str, password: str, hospital_code: str
 ) -> User:
