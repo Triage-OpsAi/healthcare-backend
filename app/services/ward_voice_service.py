@@ -451,7 +451,7 @@ async def confirm_capture(db: AsyncSession, capture_id: uuid.UUID, payload: Conf
         observation.unit = item.unit
         observation.confirmed_by = _user_id(user)
         observation.confirmed_at = now
-        observation.requires_countersign = item.requires_countersign
+        observation.requires_countersign = item.requires_countersign or item.observation_type in {"oral_intake", "consumable"}
         db.add(observation)
         fluid_map = {
             "urine_output": ("output", "urine"),
@@ -594,6 +594,54 @@ async def update_task(db: AsyncSession, task_id: uuid.UUID, task_status: str, us
         task.completed_at, task.completed_by = datetime.now(timezone.utc), _user_id(user)
     await _audit(db, user, "task.updated", "ward_task", task.id, task.patient_id, {"status": task_status})
     await db.commit()
+
+
+async def list_consumables(
+    db: AsyncSession,
+    user: CurrentUser,
+    *,
+    ward_id: uuid.UUID | None = None,
+    patient_id: uuid.UUID | None = None,
+) -> list[dict]:
+    recorder = aliased(User)
+    approver = aliased(User)
+    query = (
+        select(ExtractedObservation, VoiceCapture, Bed, Patient, recorder, approver)
+        .join(VoiceCapture, VoiceCapture.id == ExtractedObservation.capture_id)
+        .join(Bed, Bed.id == VoiceCapture.bed_id)
+        .join(Patient, Patient.id == ExtractedObservation.patient_id)
+        .join(recorder, recorder.id == ExtractedObservation.confirmed_by)
+        .outerjoin(approver, approver.id == ExtractedObservation.countersigned_by)
+        .where(
+            ExtractedObservation.hospital_id == _hospital_id(user),
+            ExtractedObservation.observation_type.in_(["oral_intake", "consumable"]),
+            ExtractedObservation.confirmed_at.is_not(None),
+        )
+    )
+    if ward_id:
+        query = query.where(VoiceCapture.ward_id == ward_id)
+    if patient_id:
+        query = query.where(ExtractedObservation.patient_id == patient_id)
+    rows = (await db.execute(query.order_by(ExtractedObservation.confirmed_at.desc()))).all()
+    return [
+        {
+            "id": item.id,
+            "capture_id": capture.id,
+            "patient_id": patient.id,
+            "patient_name": patient.full_name,
+            "bed_number": bed.bed_number,
+            "item_name": item.confirmed_value_text or ("Water / oral fluid" if item.observation_type == "oral_intake" else "Consumed item"),
+            "quantity_numeric": float(item.confirmed_value_numeric) if item.confirmed_value_numeric is not None else None,
+            "quantity_text": None if item.confirmed_value_numeric is not None else item.confirmed_value_text,
+            "unit": item.unit,
+            "recorded_by": recorded_by.full_name,
+            "recorded_at": item.confirmed_at,
+            "approval_status": "approved" if item.countersigned_at else "pending",
+            "approved_by": approved_by.full_name if approved_by else None,
+            "approved_at": item.countersigned_at,
+        }
+        for item, capture, bed, patient, recorded_by, approved_by in rows
+    ]
 
 
 async def list_countersigns(db: AsyncSession, user: CurrentUser) -> list[dict]:

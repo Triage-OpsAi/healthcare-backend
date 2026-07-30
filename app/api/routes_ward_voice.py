@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser
 from app.db.database import get_db
 from app.schemas.ward_voice import (
-    BedSummary, CloseChartRequest, ConfirmCaptureRequest, CountersignSummary, FluidChartResponse,
+    BedSummary, CloseChartRequest, ConfirmCaptureRequest, ConsumableSummary, CountersignSummary, FluidChartResponse,
     FluidEntryCreate, IVInfusionCreate, TaskUpdate, VoiceCaptureComplete,
     VoiceCaptureCreate, VoiceCaptureResult, VoiceCaptureUpload, WardCard, WardVoiceOverview,
 )
@@ -144,6 +144,21 @@ async def countersigns(
     user: CurrentUser = Depends(require_permission("emr:review")),
 ):
     return await ward_voice_service.list_countersigns(db, user)
+
+
+@router.get("/consumables", response_model=list[ConsumableSummary])
+async def consumables(
+    ward_id: uuid.UUID | None = None,
+    patient_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(require_any_permission("emr:read", "emr:create")),
+):
+    return await ward_voice_service.list_consumables(
+        db,
+        user,
+        ward_id=ward_id,
+        patient_id=patient_id,
+    )
 
 
 @router.post("/countersigns/{observation_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -213,3 +213,20 @@ class CountersignSummary(BaseModel):
     unit: str | None
     confirmed_by: str
     confirmed_at: datetime
+
+
+class ConsumableSummary(BaseModel):
+    id: uuid.UUID
+    capture_id: uuid.UUID
+    patient_id: uuid.UUID
+    patient_name: str
+    bed_number: str
+    item_name: str
+    quantity_numeric: float | None
+    quantity_text: str | None
+    unit: str | None
+    recorded_by: str
+    recorded_at: datetime
+    approval_status: Literal["pending", "approved"]
+    approved_by: str | None
+    approved_at: datetime | None
