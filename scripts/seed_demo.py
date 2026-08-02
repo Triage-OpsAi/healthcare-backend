@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.db.database import AsyncSessionLocal, engine
-from app.db.models import Encounter, Hospital, Patient, Permission, Role, User
+from app.db.models import Encounter, Hospital, Patient, PatientVisit, Permission, Role, User
 
 HOSPITAL_CODE = "RAINBOW-BLR"
 USER_EMAIL = "doctor@example.com"
@@ -83,9 +83,15 @@ async def seed() -> None:
             )
         )
         if encounter is None:
+            visit = await session.scalar(select(PatientVisit).where(PatientVisit.patient_id == patient.id).order_by(PatientVisit.created_at.desc()).limit(1))
+            if visit is None:
+                visit = PatientVisit(hospital_id=hospital.id, patient_id=patient.id, created_by=user.id, visit_number=1, status="open")
+                session.add(visit)
+                await session.flush()
             encounter = Encounter(
                 hospital_id=hospital.id,
                 patient_id=patient.id,
+                visit_id=visit.id,
                 doctor_id=user.id,
                 department="General Medicine",
                 status="open",

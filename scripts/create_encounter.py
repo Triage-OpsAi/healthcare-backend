@@ -6,7 +6,7 @@ import asyncio
 from sqlalchemy import select
 
 from app.db.database import AsyncSessionLocal, engine
-from app.db.models import Encounter, Hospital, Patient, User
+from app.db.models import Encounter, Hospital, Patient, PatientVisit, User
 
 
 async def create_encounter(
@@ -55,9 +55,15 @@ async def create_encounter(
         action = "reused"
         if encounter is None:
             action = "created"
+            visit = await session.scalar(select(PatientVisit).where(PatientVisit.patient_id == patient.id).order_by(PatientVisit.created_at.desc()).limit(1))
+            if visit is None:
+                visit = PatientVisit(hospital_id=hospital.id, patient_id=patient.id, created_by=doctor.id, visit_number=1, status="open")
+                session.add(visit)
+                await session.flush()
             encounter = Encounter(
                 hospital_id=hospital.id,
                 patient_id=patient.id,
+                visit_id=visit.id,
                 doctor_id=doctor.id,
                 department=department,
                 status="open",

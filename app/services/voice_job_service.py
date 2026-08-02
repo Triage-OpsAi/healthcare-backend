@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser
 from app.celery_app import celery_app
 from app.core.config import settings
-from app.db.models import Encounter, Patient, VoiceIntakeJob
+from app.db.models import Patient, PatientVisit, VoiceIntakeJob
 from app.schemas.emr import (
     VoiceJobCreateRequest,
     VoiceJobSummary,
@@ -66,13 +66,13 @@ async def create_job(
         patient = await db.get(Patient, payload.patient_id)
         if patient is None or patient.hospital_id != hospital_id:
             raise HTTPException(status_code=404, detail="Patient not found")
-    if payload.encounter_id:
-        encounter = await db.get(Encounter, payload.encounter_id)
+    if payload.visit_id:
+        visit = await db.get(PatientVisit, payload.visit_id)
         if (
-            encounter is None
-            or encounter.hospital_id != hospital_id
+            visit is None
+            or visit.hospital_id != hospital_id
             or payload.patient_id is None
-            or encounter.patient_id != payload.patient_id
+            or visit.patient_id != payload.patient_id
         ):
             raise HTTPException(status_code=404, detail="Visit not found for this patient")
     object_key = (
@@ -90,7 +90,7 @@ async def create_job(
         language_code=payload.language_code,
         department=payload.department.strip() if payload.department else None,
         patient_id=payload.patient_id,
-        encounter_id=payload.encounter_id,
+        visit_id=payload.visit_id,
         status="awaiting_upload",
     )
     try:

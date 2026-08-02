@@ -69,14 +69,14 @@ async def update_patient(
 @router.get("/{patient_id}/chart", response_model=PatientChart)
 async def patient_chart(
     patient_id: uuid.UUID,
-    encounter_id: uuid.UUID | None = None,
+    visit_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(require_permission("emr:read")),
 ):
     return await patient_chart_service.get_chart(
         db,
         patient_id=patient_id,
-        encounter_id=encounter_id,
+        visit_id=visit_id,
         current_user=current_user,
     )
 

@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
@@ -15,6 +15,7 @@ from app.db.models import (
     PatientMedication,
     PatientReport,
     PatientSectionReview,
+    PatientVisit,
     User,
     VoiceIntakeJob,
 )
@@ -103,50 +104,53 @@ async def get_chart(
     db: AsyncSession,
     *,
     patient_id: uuid.UUID,
-    encounter_id: uuid.UUID | None = None,
+    visit_id: uuid.UUID | None = None,
     current_user: CurrentUser,
 ) -> PatientChart:
     patient = await _patient(db, patient_id, current_user)
     visit_rows = (
         await db.execute(
-            select(Encounter, User, EMRRecord)
-            .join(User, User.id == Encounter.doctor_id)
+            select(PatientVisit, User, Encounter, EMRRecord)
+            .join(User, User.id == PatientVisit.created_by)
+            .outerjoin(Encounter, Encounter.visit_id == PatientVisit.id)
             .outerjoin(EMRRecord, EMRRecord.encounter_id == Encounter.id)
             .where(
-                Encounter.patient_id == patient.id,
-                Encounter.hospital_id == patient.hospital_id,
+                PatientVisit.patient_id == patient.id,
+                PatientVisit.hospital_id == patient.hospital_id,
             )
-            .order_by(Encounter.created_at.asc(), EMRRecord.created_at.desc().nullslast())
+            .order_by(PatientVisit.created_at.asc(), Encounter.created_at.desc().nullslast(), EMRRecord.created_at.desc().nullslast())
         )
     ).all()
     visit_groups: dict[uuid.UUID, dict] = {}
-    for encounter, doctor, record in visit_rows:
+    for patient_visit, doctor, encounter, record in visit_rows:
         visit = visit_groups.setdefault(
-            encounter.id,
-            {"encounter": encounter, "doctor": doctor, "records": []},
+            patient_visit.id,
+            {"visit": patient_visit, "doctor": doctor, "encounters": {}, "records": []},
         )
+        if encounter is not None:
+            visit["encounters"][encounter.id] = encounter
         if record is not None:
             visit["records"].append(record)
     visits = [
         PatientVisitSummary(
-            id=item["encounter"].id,
-            visit_number=index,
-            encounter_number=item["encounter"].encounter_number,
-            department=item["encounter"].department,
-            ward_number=item["encounter"].ward_number,
-            bed_number=item["encounter"].bed_number,
-            status=item["encounter"].status,
+            id=item["visit"].id,
+            visit_number=item["visit"].visit_number,
+            encounter_number=(next(iter(item["encounters"].values())).encounter_number if item["encounters"] else None),
+            department=(next(iter(item["encounters"].values())).department if item["encounters"] else None),
+            ward_number=(next(iter(item["encounters"].values())).ward_number if item["encounters"] else None),
+            bed_number=(next(iter(item["encounters"].values())).bed_number if item["encounters"] else None),
+            status=item["visit"].status,
             doctor_name=item["doctor"].full_name,
             summary=_encounter_summary(
                 item["records"][0].structured_note if item["records"] else None
             ) if item["records"] else "Visit created; clinical record not added yet.",
-            record_count=len(item["records"]),
-            created_at=item["encounter"].created_at,
+            encounter_count=len(item["encounters"]),
+            created_at=item["visit"].created_at,
         )
         for index, item in enumerate(visit_groups.values(), start=1)
     ]
-    selected_visit = next((visit for visit in visits if visit.id == encounter_id), None)
-    if encounter_id is not None and selected_visit is None:
+    selected_visit = next((visit for visit in visits if visit.id == visit_id), None)
+    if visit_id is not None and selected_visit is None:
         raise HTTPException(status_code=404, detail="Visit not found for this patient")
     selected_index = visits.index(selected_visit) if selected_visit else -1
     period_end = (
@@ -160,8 +164,8 @@ async def get_chart(
         Encounter.patient_id == patient.id,
         EMRRecord.hospital_id == patient.hospital_id,
     ]
-    if encounter_id is not None:
-        record_conditions.append(Encounter.id == encounter_id)
+    if visit_id is not None:
+        record_conditions.append(Encounter.visit_id == visit_id)
     record_rows = (
         await db.execute(
             select(EMRRecord, Encounter, User)
@@ -290,58 +294,89 @@ async def create_visit(
     current_user: CurrentUser,
 ) -> PatientVisitSummary:
     patient = await _patient(db, patient_id, current_user)
-    existing_count = len(
-        (
-            await db.execute(
-                select(Encounter.id).where(
-                    Encounter.patient_id == patient.id,
-                    Encounter.hospital_id == patient.hospital_id,
-                )
-            )
-        ).scalars().all()
+    await db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(f"visit:{patient.id}")))
     )
-    encounter = Encounter(
+    next_number = (
+        await db.scalar(
+            select(func.coalesce(func.max(PatientVisit.visit_number), 0)).where(
+                PatientVisit.patient_id == patient.id,
+                PatientVisit.hospital_id == patient.hospital_id,
+            )
+        )
+    ) + 1
+    visit = PatientVisit(
         hospital_id=patient.hospital_id,
         patient_id=patient.id,
-        doctor_id=uuid.UUID(current_user.user_id),
-        encounter_number=payload.encounter_number.strip() if payload.encounter_number else None,
-        department=payload.department.strip() if payload.department else None,
-        ward_number=payload.ward_number.strip() if payload.ward_number else None,
-        bed_number=payload.bed_number.strip() if payload.bed_number else None,
+        created_by=uuid.UUID(current_user.user_id),
+        visit_number=next_number,
         status="open",
     )
-    db.add(encounter)
-    await db.flush()
-    if encounter.ward_number and encounter.bed_number:
-        await ward_voice_service.sync_patient_assignment(
-            db, encounter=encounter, user=current_user
-        )
+    db.add(visit)
     await db.commit()
-    await db.refresh(encounter)
+    await db.refresh(visit)
     creator = await db.get(User, uuid.UUID(current_user.user_id))
     await audit_service.safe_log_event(
         hospital_id=patient.hospital_id,
         user_id=current_user.user_id,
         actor_role=current_user.role,
         action="patient_visit.created",
-        resource_type="encounter",
-        resource_id=encounter.id,
+        resource_type="patient_visit",
+        resource_id=visit.id,
         patient_id=patient.id,
-        encounter_id=encounter.id,
     )
     return PatientVisitSummary(
-        id=encounter.id,
-        visit_number=existing_count + 1,
-        encounter_number=encounter.encounter_number,
-        department=encounter.department,
-        ward_number=encounter.ward_number,
-        bed_number=encounter.bed_number,
-        status=encounter.status,
+        id=visit.id,
+        visit_number=visit.visit_number,
+        encounter_number=None,
+        department=None,
+        ward_number=None,
+        bed_number=None,
+        status=visit.status,
         doctor_name=creator.full_name if creator else "Clinical user",
-        summary="Visit created; clinical record not added yet.",
-        record_count=0,
-        created_at=encounter.created_at,
+        summary="Visit created; no encounters recorded yet.",
+        encounter_count=0,
+        created_at=visit.created_at,
     )
+
+
+async def _encounter_visit(
+    db: AsyncSession,
+    *,
+    patient: Patient,
+    visit_id: uuid.UUID | None,
+    current_user: CurrentUser,
+) -> PatientVisit:
+    if visit_id is not None:
+        visit = await db.get(PatientVisit, visit_id)
+        if visit is None or visit.patient_id != patient.id or visit.hospital_id != patient.hospital_id:
+            raise HTTPException(status_code=404, detail="Visit not found for this patient")
+        return visit
+    await db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(f"visit:{patient.id}")))
+    )
+    visit = await db.scalar(
+        select(PatientVisit)
+        .where(
+            PatientVisit.patient_id == patient.id,
+            PatientVisit.hospital_id == patient.hospital_id,
+        )
+        .order_by(PatientVisit.created_at.desc())
+        .limit(1)
+    )
+    if visit is not None:
+        return visit
+    next_number = 1
+    visit = PatientVisit(
+        hospital_id=patient.hospital_id,
+        patient_id=patient.id,
+        created_by=uuid.UUID(current_user.user_id),
+        visit_number=next_number,
+        status="open",
+    )
+    db.add(visit)
+    await db.flush()
+    return visit
 
 
 async def _section_review(
@@ -651,9 +686,13 @@ async def update_patient_details(
         )
     ).scalar_one_or_none()
     if encounter is None:
+        visit = await _encounter_visit(
+            db, patient=patient, visit_id=None, current_user=current_user
+        )
         encounter = Encounter(
             hospital_id=patient.hospital_id,
             patient_id=patient.id,
+            visit_id=visit.id,
             doctor_id=uuid.UUID(current_user.user_id),
             status="open",
         )
@@ -875,9 +914,13 @@ async def add_record(
     current_user: CurrentUser,
 ) -> PatientRecordSummary:
     patient = await _patient(db, patient_id, current_user)
+    visit = await _encounter_visit(
+        db, patient=patient, visit_id=payload.visit_id, current_user=current_user
+    )
     encounter = Encounter(
         hospital_id=patient.hospital_id,
         patient_id=patient.id,
+        visit_id=visit.id,
         doctor_id=uuid.UUID(current_user.user_id),
         department=payload.department,
         status="open",

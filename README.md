@@ -125,6 +125,11 @@ py -m venv .venv
 # the schema stabilizes):
 .\.venv\Scripts\python.exe -m scripts.database_setup --create
 
+# Existing databases: create patient visits and safely attach every historical
+# encounter. The migration is idempotent and preserves all clinical records.
+.\.venv\Scripts\python.exe -m scripts.migrate_patient_visits
+.\.venv\Scripts\python.exe -m scripts.verify_patient_visits
+
 # Load nationwide state/district/city masters from an official India Post
 # checkout or a local OGD CSV, then seed roles/permissions:
 git clone --depth 1 https://github.com/IndiaPost/pin.git .india-post-pin

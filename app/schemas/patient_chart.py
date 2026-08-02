@@ -48,10 +48,7 @@ class PatientDetailsResponse(BaseModel):
 
 
 class VisitCreateRequest(BaseModel):
-    encounter_number: str | None = Field(default=None, max_length=50)
-    department: str | None = Field(default=None, max_length=100)
-    ward_number: str | None = Field(default=None, max_length=50)
-    bed_number: str | None = Field(default=None, max_length=50)
+    pass
 
 
 class PatientVisitSummary(BaseModel):
@@ -64,7 +61,7 @@ class PatientVisitSummary(BaseModel):
     status: str
     doctor_name: str
     summary: str
-    record_count: int
+    encounter_count: int
     created_at: datetime
 
 
@@ -128,6 +125,7 @@ class AdditionalRecordCreateRequest(BaseModel):
     objective: str = Field(default="", max_length=8000)
     assessment: str = Field(default="", max_length=8000)
     plan: str = Field(default="", max_length=8000)
+    visit_id: uuid.UUID | None = None
 
 
 class PatientRecordSummary(BaseModel):

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.db.database import AsyncSessionLocal, engine
-from app.db.models import Encounter, Hospital, Patient, User
+from app.db.models import Encounter, Hospital, Patient, PatientVisit, User
 from app.db.ward_voice_models import Bed, FluidEntry, IVInfusion, Ward, WardTask
 
 HOSPITAL_CODE = "RAINBOW-BLR"
@@ -45,8 +45,12 @@ async def seed() -> None:
                 Encounter.hospital_id == hospital.id, Encounter.patient_id == patient.id, Encounter.status == "open"
             ))
             if not encounter:
+                visit = await db.scalar(select(PatientVisit).where(PatientVisit.patient_id == patient.id).order_by(PatientVisit.created_at.desc()).limit(1))
+                if visit is None:
+                    visit = PatientVisit(hospital_id=hospital.id, patient_id=patient.id, created_by=user.id, visit_number=1, status="open")
+                    db.add(visit); await db.flush()
                 encounter = Encounter(
-                    hospital_id=hospital.id, patient_id=patient.id, doctor_id=user.id,
+                    hospital_id=hospital.id, patient_id=patient.id, visit_id=visit.id, doctor_id=user.id,
                     ward_number="3B", bed_number=bed_number, department="Paediatrics", status="open",
                 )
                 db.add(encounter); await db.flush()

@@ -20,6 +20,7 @@ from app.db.models import (
     Hospital,
     NetworkHospitalProfile,
     Patient,
+    PatientVisit,
     PatientSectionReview,
     Permission,
     RefreshToken,
@@ -332,25 +333,38 @@ async def list_patients(
         )
     ).all()
 
+    visit_creator = aliased(User)
+    visit_rows = (
+        await db.execute(
+            select(PatientVisit, Encounter, EMRRecord, visit_creator)
+            .outerjoin(Encounter, Encounter.visit_id == PatientVisit.id)
+            .outerjoin(EMRRecord, EMRRecord.encounter_id == Encounter.id)
+            .join(visit_creator, visit_creator.id == PatientVisit.created_by)
+            .where(PatientVisit.hospital_id == hospital_id)
+            .order_by(
+                PatientVisit.created_at.asc(),
+                Encounter.created_at.desc().nullslast(),
+                EMRRecord.created_at.desc().nullslast(),
+            )
+        )
+    ).all()
     visit_groups: dict[uuid.UUID, dict[uuid.UUID, dict]] = {}
-    for patient, encounter, record, doctor_user, _created_user, _role in rows:
-        if encounter is None:
-            continue
-        group = visit_groups.setdefault(patient.id, {})
+    for patient_visit, encounter, record, visit_user in visit_rows:
+        group = visit_groups.setdefault(patient_visit.patient_id, {})
         visit = group.setdefault(
-            encounter.id,
+            patient_visit.id,
             {
-                "encounter": encounter,
-                "doctor_name": doctor_user.full_name if doctor_user else "Clinical user",
-                "record_count": 0,
+                "visit": patient_visit,
+                "encounters": {},
+                "doctor_name": visit_user.full_name,
                 "summary": None,
             },
         )
-        if record is not None:
-            visit["record_count"] += 1
-            if visit["summary"] is None:
-                note = record.structured_note or {}
-                visit["summary"] = (
+        if encounter is not None:
+            visit["encounters"][encounter.id] = encounter
+        if record is not None and visit["summary"] is None:
+            note = record.structured_note or {}
+            visit["summary"] = (
                     note.get("chief_complaint")
                     or note.get("assessment")
                     or note.get("subjective")
@@ -358,22 +372,22 @@ async def list_patients(
 
     patient_visits: dict[uuid.UUID, list[PatientVisitSummary]] = {}
     for patient_id, group in visit_groups.items():
-        chronological = sorted(group.values(), key=lambda item: item["encounter"].created_at)
+        chronological = sorted(group.values(), key=lambda item: item["visit"].created_at)
         summaries = [
             PatientVisitSummary(
-                id=item["encounter"].id,
-                visit_number=index,
-                encounter_number=item["encounter"].encounter_number,
-                department=item["encounter"].department,
-                ward_number=item["encounter"].ward_number,
-                bed_number=item["encounter"].bed_number,
-                status=item["encounter"].status,
+                id=item["visit"].id,
+                visit_number=item["visit"].visit_number,
+                encounter_number=(next(iter(item["encounters"].values())).encounter_number if item["encounters"] else None),
+                department=(next(iter(item["encounters"].values())).department if item["encounters"] else None),
+                ward_number=(next(iter(item["encounters"].values())).ward_number if item["encounters"] else None),
+                bed_number=(next(iter(item["encounters"].values())).bed_number if item["encounters"] else None),
+                status=item["visit"].status,
                 doctor_name=item["doctor_name"],
-                summary=str(item["summary"] or "Visit created; clinical record not added yet."),
-                record_count=item["record_count"],
-                created_at=item["encounter"].created_at,
+                summary=str(item["summary"] or "Visit created; no encounters recorded yet."),
+                encounter_count=len(item["encounters"]),
+                created_at=item["visit"].created_at,
             )
-            for index, item in enumerate(chronological, start=1)
+            for item in chronological
         ]
         patient_visits[patient_id] = list(reversed(summaries))
 
@@ -384,6 +398,8 @@ async def list_patients(
         if patient.id in seen:
             continue
         seen.add(patient.id)
+        visits_for_patient = patient_visits.get(patient.id, [])
+        latest_visit = visits_for_patient[0] if visits_for_patient else None
         age = None
         if patient.date_of_birth:
             born = patient.date_of_birth.date()
@@ -402,9 +418,9 @@ async def list_patients(
                 id=patient.id,
                 latest_record_id=record.id if record else None,
                 encounter_id=encounter.id if encounter else None,
-                encounter_number=encounter.encounter_number if encounter else None,
-                ward_number=encounter.ward_number if encounter else None,
-                bed_number=encounter.bed_number if encounter else None,
+                encounter_number=latest_visit.encounter_number if latest_visit else None,
+                ward_number=latest_visit.ward_number if latest_visit else None,
+                bed_number=latest_visit.bed_number if latest_visit else None,
                 patient_name=patient.full_name,
                 patient_reference=patient.abha_id or str(patient.id)[:8].upper(),
                 serial_number=len(patients) + 1,
@@ -412,19 +428,19 @@ async def list_patients(
                 gender=patient.gender,
                 phone=patient.phone,
                 subject=str(subject),
-                doctor_name=doctor_user.full_name if doctor_user else None,
+                doctor_name=latest_visit.doctor_name if latest_visit else (doctor_user.full_name if doctor_user else None),
                 nurses=(
                     [created_user.full_name]
                     if created_user and role and role.name == "nurse"
                     else []
                 ),
-                status=record.status if record else "no_record",
+                status=(record.status if record and latest_visit and latest_visit.encounter_count else "no_record"),
                 created_at=patient.created_at,
-                last_visit_at=encounter.created_at if encounter else None,
+                last_visit_at=latest_visit.created_at if latest_visit else None,
                 approval_percentage=round(
                     100 * approved_counts.get(patient.id, 0) / 8
                 ),
-                visits=patient_visits.get(patient.id, []),
+                visits=visits_for_patient,
             )
         )
     return patients
@@ -766,9 +782,19 @@ async def create_encounter(
     )
     db.add(patient)
     await db.flush()
+    visit = PatientVisit(
+        hospital_id=hospital_id,
+        patient_id=patient.id,
+        created_by=uuid.UUID(current_user.user_id),
+        visit_number=1,
+        status="open",
+    )
+    db.add(visit)
+    await db.flush()
     encounter = Encounter(
         hospital_id=hospital_id,
         patient_id=patient.id,
+        visit_id=visit.id,
         doctor_id=uuid.UUID(current_user.user_id),
         department=payload.department,
         status="open",

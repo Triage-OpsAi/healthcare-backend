@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser
 from app.celery_app import celery_app
 from app.db.database import AsyncSessionLocal
-from app.db.models import EMRRecord, Encounter, Patient, VoiceIntakeJob
+from app.db.models import EMRRecord, Encounter, Patient, PatientVisit, VoiceIntakeJob
 from app.services import (
     audit_service,
     emr_service,
@@ -159,15 +159,38 @@ async def _build_patient_emr(job_id: str) -> None:
             patient = await db.get(Patient, job.patient_id)
             if patient is None or patient.hospital_id != job.hospital_id:
                 raise RuntimeError("Selected patient is unavailable")
+            visit = await db.get(PatientVisit, job.visit_id) if job.visit_id else None
+            if visit is None:
+                visit = await db.scalar(
+                    select(PatientVisit)
+                    .where(
+                        PatientVisit.patient_id == patient.id,
+                        PatientVisit.hospital_id == job.hospital_id,
+                    )
+                    .order_by(PatientVisit.created_at.desc())
+                    .limit(1)
+                )
+            if visit is None:
+                visit = PatientVisit(
+                    hospital_id=job.hospital_id,
+                    patient_id=patient.id,
+                    created_by=job.created_by,
+                    visit_number=1,
+                    status="open",
+                )
+                db.add(visit)
+                await db.flush()
             encounter = Encounter(
                 hospital_id=job.hospital_id,
                 patient_id=patient.id,
+                visit_id=visit.id,
                 doctor_id=job.created_by,
                 department=job.department,
                 status="open",
             )
             db.add(encounter)
             await db.flush()
+            job.visit_id = visit.id
             job.encounter_id = encounter.id
             job.status = "generating_emr"
             await db.commit()
@@ -181,6 +204,7 @@ async def _build_patient_emr(job_id: str) -> None:
                 )
             )
             job.patient_id = patient.id
+            job.visit_id = encounter.visit_id
             job.encounter_id = encounter.id
             job.status = "generating_emr"
             await db.commit()
