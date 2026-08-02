@@ -24,6 +24,7 @@ from app.schemas.patient_chart import (
     PatientMedicationSummary,
     PatientRecordSummary,
     PatientReportSummary,
+    PatientVisitSummary,
     PatientSectionKey,
     PatientSectionItemUpdateRequest,
     PatientSectionReviewSummary,
@@ -31,6 +32,7 @@ from app.schemas.patient_chart import (
     ReportCompleteRequest,
     ReportCreateRequest,
     ReportUploadResponse,
+    VisitCreateRequest,
 )
 from app.schemas.doctor import ClinicalUserSummary
 from app.services import (
@@ -67,11 +69,31 @@ async def update_patient(
 @router.get("/{patient_id}/chart", response_model=PatientChart)
 async def patient_chart(
     patient_id: uuid.UUID,
+    encounter_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(require_permission("emr:read")),
 ):
     return await patient_chart_service.get_chart(
-        db, patient_id=patient_id, current_user=current_user
+        db,
+        patient_id=patient_id,
+        encounter_id=encounter_id,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/{patient_id}/visits",
+    response_model=PatientVisitSummary,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_patient_visit(
+    patient_id: uuid.UUID,
+    payload: VisitCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(require_permission("emr:create")),
+):
+    return await patient_chart_service.create_visit(
+        db, patient_id=patient_id, payload=payload, current_user=current_user
     )
 
 

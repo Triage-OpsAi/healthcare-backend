@@ -71,6 +71,7 @@ class VoiceJobCreateRequest(BaseModel):
     language_code: str = Field(default="unknown", max_length=10)
     department: str | None = Field(default=None, max_length=100)
     patient_id: uuid.UUID | None = None
+    encounter_id: uuid.UUID | None = None
 
 
 class VoiceJobUploadResponse(BaseModel):

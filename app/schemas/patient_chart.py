@@ -47,6 +47,27 @@ class PatientDetailsResponse(BaseModel):
     bed_number: str | None
 
 
+class VisitCreateRequest(BaseModel):
+    encounter_number: str | None = Field(default=None, max_length=50)
+    department: str | None = Field(default=None, max_length=100)
+    ward_number: str | None = Field(default=None, max_length=50)
+    bed_number: str | None = Field(default=None, max_length=50)
+
+
+class PatientVisitSummary(BaseModel):
+    id: uuid.UUID
+    visit_number: int
+    encounter_number: str | None
+    department: str | None
+    ward_number: str | None
+    bed_number: str | None
+    status: str
+    doctor_name: str
+    summary: str
+    record_count: int
+    created_at: datetime
+
+
 class ReportCreateRequest(BaseModel):
     title: str = Field(min_length=2, max_length=255)
     content_type: str = Field(min_length=3, max_length=100)
@@ -215,3 +236,5 @@ class PatientChart(BaseModel):
     handovers: list[HandoverSummaryItem] = Field(default_factory=list)
     section_reviews: list[PatientSectionReviewSummary] = Field(default_factory=list)
     approval_percentage: int = 0
+    visits: list[PatientVisitSummary] = Field(default_factory=list)
+    selected_visit: PatientVisitSummary | None = None

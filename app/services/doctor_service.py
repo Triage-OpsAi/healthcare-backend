@@ -42,6 +42,7 @@ from app.schemas.doctor import (
     PatientDashboardSummary,
     UpdateClinicalUserRequest,
 )
+from app.schemas.patient_chart import PatientVisitSummary
 
 
 CLINICAL_PERMISSION_DESCRIPTIONS = {
@@ -325,11 +326,56 @@ async def list_patients(
             .where(Patient.hospital_id == hospital_id)
             .order_by(
                 Patient.created_at.desc(),
-                EMRRecord.created_at.desc().nullslast(),
                 Encounter.created_at.desc().nullslast(),
+                EMRRecord.created_at.desc().nullslast(),
             )
         )
     ).all()
+
+    visit_groups: dict[uuid.UUID, dict[uuid.UUID, dict]] = {}
+    for patient, encounter, record, doctor_user, _created_user, _role in rows:
+        if encounter is None:
+            continue
+        group = visit_groups.setdefault(patient.id, {})
+        visit = group.setdefault(
+            encounter.id,
+            {
+                "encounter": encounter,
+                "doctor_name": doctor_user.full_name if doctor_user else "Clinical user",
+                "record_count": 0,
+                "summary": None,
+            },
+        )
+        if record is not None:
+            visit["record_count"] += 1
+            if visit["summary"] is None:
+                note = record.structured_note or {}
+                visit["summary"] = (
+                    note.get("chief_complaint")
+                    or note.get("assessment")
+                    or note.get("subjective")
+                )
+
+    patient_visits: dict[uuid.UUID, list[PatientVisitSummary]] = {}
+    for patient_id, group in visit_groups.items():
+        chronological = sorted(group.values(), key=lambda item: item["encounter"].created_at)
+        summaries = [
+            PatientVisitSummary(
+                id=item["encounter"].id,
+                visit_number=index,
+                encounter_number=item["encounter"].encounter_number,
+                department=item["encounter"].department,
+                ward_number=item["encounter"].ward_number,
+                bed_number=item["encounter"].bed_number,
+                status=item["encounter"].status,
+                doctor_name=item["doctor_name"],
+                summary=str(item["summary"] or "Visit created; clinical record not added yet."),
+                record_count=item["record_count"],
+                created_at=item["encounter"].created_at,
+            )
+            for index, item in enumerate(chronological, start=1)
+        ]
+        patient_visits[patient_id] = list(reversed(summaries))
 
     patients: list[PatientDashboardSummary] = []
     seen: set[uuid.UUID] = set()
@@ -378,6 +424,7 @@ async def list_patients(
                 approval_percentage=round(
                     100 * approved_counts.get(patient.id, 0) / 8
                 ),
+                visits=patient_visits.get(patient.id, []),
             )
         )
     return patients

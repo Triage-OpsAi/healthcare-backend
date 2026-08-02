@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.schemas.patient_chart import PatientVisitSummary
+
 
 class DoctorIdentity(BaseModel):
     id: uuid.UUID
@@ -70,6 +72,7 @@ class PatientDashboardSummary(BaseModel):
     created_at: datetime
     last_visit_at: datetime | None
     approval_percentage: int = 0
+    visits: list[PatientVisitSummary] = Field(default_factory=list)
 
 
 class ClinicalRoleSummary(BaseModel):
