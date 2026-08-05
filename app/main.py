@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.routes_admin import (
     api_key_router,
@@ -21,6 +22,7 @@ from app.api.routes_patient_chart import router as patient_chart_router
 from app.api.routes_ward_voice import router as ward_voice_router
 from app.core.config import settings
 from app.schemas.common import HealthResponse
+from app.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +81,9 @@ app = FastAPI(
     ),
     version="0.1.0",
     openapi_tags=OPENAPI_TAGS,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url=None if settings.ENVIRONMENT.lower() == "production" else "/docs",
+    redoc_url=None if settings.ENVIRONMENT.lower() == "production" else "/redoc",
+    openapi_url=None if settings.ENVIRONMENT.lower() == "production" else "/openapi.json",
     contact={"name": "Meridian Platform Team"},
     license_info={"name": "Proprietary"},
 )
@@ -90,9 +92,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Request-ID"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.TRUSTED_HOSTS)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")

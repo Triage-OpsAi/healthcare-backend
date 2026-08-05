@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
 from app.core.config import settings
-from app.db.models import Encounter, Patient, PatientVisit
+from app.db.models import Encounter, Patient
 
 
 class PatientDetailsError(ValueError):
@@ -184,7 +184,7 @@ async def build_patient_and_encounter(
     current_user: CurrentUser,
     department_override: str | None = None,
 ) -> tuple[Patient, Encounter, bool]:
-    """Resolve a stable identifier or create a patient, then create the visit.
+    """Resolve a stable identifier or create a patient, then create an encounter.
 
     Names are deliberately not used for automatic matching because two patients
     can share a name. A patient reference is preferred; phone is the fallback.
@@ -252,30 +252,10 @@ async def build_patient_and_encounter(
     department = _clean_optional(department_override) or _clean_optional(
         intake.get("department")
     )
-    await db.execute(
-        select(func.pg_advisory_xact_lock(func.hashtext(f"visit:{patient.id}")))
-    )
-    next_visit_number = (
-        await db.scalar(
-            select(func.coalesce(func.max(PatientVisit.visit_number), 0)).where(
-                PatientVisit.patient_id == patient.id,
-                PatientVisit.hospital_id == hospital_id,
-            )
-        )
-    ) + 1
-    visit = PatientVisit(
-        hospital_id=hospital_id,
-        patient_id=patient.id,
-        created_by=uuid.UUID(current_user.user_id),
-        visit_number=next_visit_number,
-        status="open",
-    )
-    db.add(visit)
-    await db.flush()
     encounter = Encounter(
         hospital_id=hospital_id,
         patient_id=patient.id,
-        visit_id=visit.id,
+        visit_id=None,
         doctor_id=uuid.UUID(current_user.user_id),
         department=department,
         status="open",

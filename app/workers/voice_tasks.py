@@ -160,37 +160,23 @@ async def _build_patient_emr(job_id: str) -> None:
             if patient is None or patient.hospital_id != job.hospital_id:
                 raise RuntimeError("Selected patient is unavailable")
             visit = await db.get(PatientVisit, job.visit_id) if job.visit_id else None
-            if visit is None:
-                visit = await db.scalar(
-                    select(PatientVisit)
-                    .where(
-                        PatientVisit.patient_id == patient.id,
-                        PatientVisit.hospital_id == job.hospital_id,
-                    )
-                    .order_by(PatientVisit.created_at.desc())
-                    .limit(1)
-                )
-            if visit is None:
-                visit = PatientVisit(
-                    hospital_id=job.hospital_id,
-                    patient_id=patient.id,
-                    created_by=job.created_by,
-                    visit_number=1,
-                    status="open",
-                )
-                db.add(visit)
-                await db.flush()
+            if job.visit_id and (
+                visit is None
+                or visit.patient_id != patient.id
+                or visit.hospital_id != job.hospital_id
+            ):
+                raise RuntimeError("Selected visit is unavailable")
             encounter = Encounter(
                 hospital_id=job.hospital_id,
                 patient_id=patient.id,
-                visit_id=visit.id,
+                visit_id=visit.id if visit else None,
                 doctor_id=job.created_by,
                 department=job.department,
                 status="open",
             )
             db.add(encounter)
             await db.flush()
-            job.visit_id = visit.id
+            job.visit_id = visit.id if visit else None
             job.encounter_id = encounter.id
             job.status = "generating_emr"
             await db.commit()

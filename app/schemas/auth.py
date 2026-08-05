@@ -43,7 +43,7 @@ class ClinicalHospitalCodeResponse(BaseModel):
 
 class ClinicalLoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=1)
+    password: str = Field(min_length=1, max_length=128)
     hospital_code: str = Field(
         description="Clinical hospital tenant code.", examples=["RAINBOW-BLR"], min_length=1
     )
@@ -60,11 +60,20 @@ class TokenResponse(BaseModel):
     access_token: str = Field(description="Short-lived JWT for the Swagger Authorize dialog.")
     refresh_token: str = Field(description="Opaque token used only by refresh and logout.")
     token_type: str = Field(default="bearer", examples=["bearer"])
+    csrf_token: str = Field(
+        description="CSRF token required for state-changing requests made with session cookies."
+    )
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str = Field(description="Refresh token returned by login or the last refresh.")
+    refresh_token: str | None = Field(
+        default=None,
+        description="Optional for cookie sessions; legacy API clients may submit the refresh token.",
+    )
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str = Field(description="Refresh token to revoke.")
+    refresh_token: str | None = Field(
+        default=None,
+        description="Optional for cookie sessions; legacy API clients may submit the refresh token.",
+    )

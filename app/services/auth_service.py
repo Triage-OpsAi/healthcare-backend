@@ -231,7 +231,11 @@ async def rotate_refresh_token(db: AsyncSession, raw_refresh_token: str) -> tupl
     """Validates a refresh token, revokes it, and issues a new access+refresh pair.
     Rotation (not reuse) means a stolen refresh token has a one-shot window."""
     token_hash = hash_refresh_token(raw_refresh_token)
-    result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
+    result = await db.execute(
+        select(RefreshToken)
+        .where(RefreshToken.token_hash == token_hash)
+        .with_for_update()
+    )
     stored = result.scalar_one_or_none()
 
     if stored is None or stored.revoked or stored.expires_at < datetime.now(timezone.utc):

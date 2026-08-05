@@ -14,6 +14,7 @@ from app.core.security import (
     generate_invitation_token,
 )
 from app.db.models import (
+    AuditLog,
     ClientProfile,
     EMRRecord,
     Encounter,
@@ -340,7 +341,16 @@ async def list_patients(
             .outerjoin(Encounter, Encounter.visit_id == PatientVisit.id)
             .outerjoin(EMRRecord, EMRRecord.encounter_id == Encounter.id)
             .join(visit_creator, visit_creator.id == PatientVisit.created_by)
-            .where(PatientVisit.hospital_id == hospital_id)
+            .where(
+                PatientVisit.hospital_id == hospital_id,
+                select(AuditLog.id)
+                .where(
+                    AuditLog.action == "patient_visit.created",
+                    AuditLog.resource_type == "patient_visit",
+                    AuditLog.resource_id == PatientVisit.id,
+                )
+                .exists(),
+            )
             .order_by(
                 PatientVisit.created_at.asc(),
                 Encounter.created_at.desc().nullslast(),
@@ -782,19 +792,10 @@ async def create_encounter(
     )
     db.add(patient)
     await db.flush()
-    visit = PatientVisit(
-        hospital_id=hospital_id,
-        patient_id=patient.id,
-        created_by=uuid.UUID(current_user.user_id),
-        visit_number=1,
-        status="open",
-    )
-    db.add(visit)
-    await db.flush()
     encounter = Encounter(
         hospital_id=hospital_id,
         patient_id=patient.id,
-        visit_id=visit.id,
+        visit_id=None,
         doctor_id=uuid.UUID(current_user.user_id),
         department=payload.department,
         status="open",

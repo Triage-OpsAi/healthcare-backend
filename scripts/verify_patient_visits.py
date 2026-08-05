@@ -1,4 +1,4 @@
-"""Read-only integrity check for the patient -> visit -> encounter hierarchy."""
+"""Read-only integrity check for optional encounter-to-visit assignments."""
 
 import asyncio
 
@@ -16,20 +16,27 @@ async def main() -> None:
             await connection.execute(text("""
                 SELECT
                     (SELECT COUNT(*) FROM patient_visits) AS visits,
+                    (SELECT COUNT(*) FROM patient_visits v WHERE EXISTS (
+                        SELECT 1 FROM audit_logs a
+                        WHERE a.action = 'patient_visit.created'
+                          AND a.resource_type = 'patient_visit'
+                          AND a.resource_id = v.id
+                    )) AS explicit_visits,
                     (SELECT COUNT(*) FROM encounters) AS encounters,
-                    (SELECT COUNT(*) FROM encounters WHERE visit_id IS NULL) AS orphan_encounters,
+                    (SELECT COUNT(*) FROM encounters WHERE visit_id IS NULL) AS standalone_encounters,
                     (SELECT COALESCE(MAX(encounter_count), 0) FROM (
                         SELECT COUNT(*) AS encounter_count
                         FROM encounters
+                        WHERE visit_id IS NOT NULL
                         GROUP BY visit_id
                     ) grouped) AS max_encounters_in_one_visit
             """))
         ).one()
-    if result.orphan_encounters:
-        raise RuntimeError(f"Found {result.orphan_encounters} encounters without a visit")
     print(
         f"visits={result.visits} encounters={result.encounters} "
-        f"orphan_encounters=0 max_encounters_in_one_visit={result.max_encounters_in_one_visit}"
+        f"explicit_visits={result.explicit_visits} "
+        f"standalone_encounters={result.standalone_encounters} "
+        f"max_encounters_in_one_visit={result.max_encounters_in_one_visit}"
     )
     async with AsyncSessionLocal() as session:
         user = await session.scalar(

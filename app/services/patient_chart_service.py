@@ -9,6 +9,7 @@ from app.api.deps import CurrentUser
 from app.celery_app import celery_app
 from app.core.config import settings
 from app.db.models import (
+    AuditLog,
     EMRRecord,
     Encounter,
     Patient,
@@ -117,6 +118,13 @@ async def get_chart(
             .where(
                 PatientVisit.patient_id == patient.id,
                 PatientVisit.hospital_id == patient.hospital_id,
+                select(AuditLog.id)
+                .where(
+                    AuditLog.action == "patient_visit.created",
+                    AuditLog.resource_type == "patient_visit",
+                    AuditLog.resource_id == PatientVisit.id,
+                )
+                .exists(),
             )
             .order_by(PatientVisit.created_at.asc(), Encounter.created_at.desc().nullslast(), EMRRecord.created_at.desc().nullslast())
         )
@@ -346,37 +354,15 @@ async def _encounter_visit(
     patient: Patient,
     visit_id: uuid.UUID | None,
     current_user: CurrentUser,
-) -> PatientVisit:
+) -> PatientVisit | None:
     if visit_id is not None:
         visit = await db.get(PatientVisit, visit_id)
         if visit is None or visit.patient_id != patient.id or visit.hospital_id != patient.hospital_id:
             raise HTTPException(status_code=404, detail="Visit not found for this patient")
         return visit
-    await db.execute(
-        select(func.pg_advisory_xact_lock(func.hashtext(f"visit:{patient.id}")))
-    )
-    visit = await db.scalar(
-        select(PatientVisit)
-        .where(
-            PatientVisit.patient_id == patient.id,
-            PatientVisit.hospital_id == patient.hospital_id,
-        )
-        .order_by(PatientVisit.created_at.desc())
-        .limit(1)
-    )
-    if visit is not None:
-        return visit
-    next_number = 1
-    visit = PatientVisit(
-        hospital_id=patient.hospital_id,
-        patient_id=patient.id,
-        created_by=uuid.UUID(current_user.user_id),
-        visit_number=next_number,
-        status="open",
-    )
-    db.add(visit)
-    await db.flush()
-    return visit
+    # Only the explicit create-visit endpoint may create a visit. An encounter
+    # without a requested visit remains unassigned instead of inflating visits.
+    return None
 
 
 async def _section_review(
@@ -692,7 +678,7 @@ async def update_patient_details(
         encounter = Encounter(
             hospital_id=patient.hospital_id,
             patient_id=patient.id,
-            visit_id=visit.id,
+            visit_id=visit.id if visit else None,
             doctor_id=uuid.UUID(current_user.user_id),
             status="open",
         )
@@ -920,7 +906,7 @@ async def add_record(
     encounter = Encounter(
         hospital_id=patient.hospital_id,
         patient_id=patient.id,
-        visit_id=visit.id,
+        visit_id=visit.id if visit else None,
         doctor_id=uuid.UUID(current_user.user_id),
         department=payload.department,
         status="open",

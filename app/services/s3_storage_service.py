@@ -20,8 +20,6 @@ def _configuration() -> Settings:
     missing = [
         name
         for name, value in {
-            "AWS_ACCESS_KEY_ID": config.AWS_ACCESS_KEY_ID,
-            "AWS_SECRET_ACCESS_KEY": config.AWS_SECRET_ACCESS_KEY,
             "AWS_S3_BUCKET": config.AWS_S3_BUCKET,
             "AWS_REGION": config.AWS_REGION,
         }.items()
@@ -34,16 +32,21 @@ def _configuration() -> Settings:
 
 @lru_cache(maxsize=4)
 def _client(region: str, access_key_id: str, secret_access_key: str):
+    kwargs = {}
+    if access_key_id and secret_access_key:
+        kwargs.update(
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+        )
     return boto3.client(
         "s3",
         endpoint_url=f"https://s3.{region}.amazonaws.com",
         region_name=region,
-        aws_access_key_id=access_key_id,
-        aws_secret_access_key=secret_access_key,
         config=Config(
             signature_version="s3v4",
             s3={"addressing_style": "virtual"},
         ),
+        **kwargs,
     )
 
 
@@ -93,8 +96,13 @@ async def verify_upload(*, object_key: str, expected_size: int) -> dict:
     )
     actual_size = int(response["ContentLength"])
     if actual_size != expected_size:
+        await asyncio.to_thread(
+            _configured_client(config).delete_object,
+            Bucket=config.AWS_S3_BUCKET,
+            Key=object_key,
+        )
         raise ValueError(
-            f"Uploaded object size mismatch: expected {expected_size}, received {actual_size}"
+            "Uploaded object size does not match the declared size"
         )
     return response
 

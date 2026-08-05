@@ -96,9 +96,14 @@ async def upload_audio(
             detail=f"Unsupported language_code. Allowed: {', '.join(SUPPORTED_LANGUAGES)}",
         )
 
-    audio_bytes = await audio_file.read()
+    audio_bytes = await audio_file.read(MAX_AUDIO_BYTES + 1)
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Audio file is empty")
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Audio file exceeds the 25 MB limit.",
+        )
 
     encounter_result = await db.execute(select(Encounter).where(Encounter.id == encounter_id))
     encounter = encounter_result.scalar_one_or_none()
@@ -136,8 +141,8 @@ async def upload_audio(
             content_type=audio_file.content_type or "application/octet-stream",
             language_code=language_code,
         )
-    except Exception as exc:  # noqa: BLE001 -- surfaced to caller, record stays in 'draft'
-        raise HTTPException(status_code=502, detail=f"Processing pipeline failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 -- record stays in draft for investigation
+        raise HTTPException(status_code=502, detail="Processing pipeline failed") from exc
 
     return EMRIngestResponse(emr_record_id=record.id, status="pending_review")
 
@@ -202,7 +207,7 @@ async def create_voice_intake(
     except Exception as exc:  # noqa: BLE001 -- external pipeline errors become a stable API error
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Voice processing failed: {exc}",
+            detail="Voice processing failed",
         ) from exc
 
     try:

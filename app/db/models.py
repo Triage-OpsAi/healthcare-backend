@@ -486,7 +486,7 @@ class PatientVisit(Base):
 
 
 class Encounter(Base):
-    """A clinical interaction within a patient visit. One visit -> many encounters."""
+    """A clinical interaction, optionally attached to an explicitly created visit."""
     __tablename__ = "encounters"
     __table_args__ = (
         Index("ix_encounters_hospital_id", "hospital_id"),
@@ -496,7 +496,9 @@ class Encounter(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     hospital_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("hospitals.id"), nullable=False)
     patient_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patients.id"), nullable=False)
-    visit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("patient_visits.id"), nullable=False, index=True)
+    visit_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("patient_visits.id"), nullable=True, index=True
+    )
     doctor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     encounter_number: Mapped[str | None] = mapped_column(String(50))
     ward_number: Mapped[str | None] = mapped_column(String(50))
