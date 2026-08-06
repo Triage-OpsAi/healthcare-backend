@@ -72,8 +72,12 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
     DOCTOR_FRONTEND_URL: str = "http://localhost:3001"
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
-    TRUSTED_HOSTS: list[str] = ["localhost", "127.0.0.1", "testserver"]
-    TRUSTED_HOSTS: list[str] = ["localhost", "127.0.0.1", "testserver"]
+    TRUSTED_HOSTS: list[str] = [
+        "healthcare-backend.triage-ops.com",
+        "localhost",
+        "127.0.0.1",
+        "testserver",
+    ]
     INVITATION_EXPIRE_HOURS: int = 48
 
     # Optional SMTP delivery. Invitations are written to the application log
