@@ -1,21 +1,23 @@
 import json
 from pathlib import Path
 
-from dotenv import load_dotenv
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# The platform administrator owns the SMTP configuration. Load those values as
-# a fallback so the API can deliver both platform and clinical invitations
-# without duplicating credentials across repositories.
-PLATFORM_ENV = Path(__file__).resolve().parents[3] / "healthai-platform-2" / ".env"
-if PLATFORM_ENV.exists():
-    load_dotenv(PLATFORM_ENV, override=False)
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+# Later dotenv files override earlier files; process environment wins over all
+# files. The sibling frontend is a local-development fallback only. Deployed
+# containers must receive SMTP settings through their own environment.
+ENV_FILES = (
+    BACKEND_ROOT.parent / "healthai-platform-2" / ".env",
+    BACKEND_ROOT.parent / "EMR-NextApp" / ".env",
+    BACKEND_ROOT / ".env",
+)
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILES, extra="ignore")
 
     # Database
     DATABASE_URL: str

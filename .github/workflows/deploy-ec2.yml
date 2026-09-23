@@ -125,6 +125,19 @@ jobs:
           DOCTOR_FRONTEND_URL: ${{ vars.DOCTOR_FRONTEND_URL }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS || vars.CORS_ORIGINS }}
 
+          SMTP_HOST: ${{ vars.SMTP_HOST || secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME || vars.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM_EMAIL: ${{ vars.SMTP_FROM_EMAIL || secrets.SMTP_FROM_EMAIL }}
+          SMTP_FROM_NAME: ${{ vars.SMTP_FROM_NAME }}
+          SMTP_USE_TLS: ${{ vars.SMTP_USE_TLS }}
+          SMTP_USE_SSL: ${{ vars.SMTP_USE_SSL }}
+          SMTP_TIMEOUT_SECONDS: ${{ vars.SMTP_TIMEOUT_SECONDS }}
+          SMTP_RETRY_ATTEMPTS: ${{ vars.SMTP_RETRY_ATTEMPTS }}
+          SMTP_RETRY_BASE_SECONDS: ${{ vars.SMTP_RETRY_BASE_SECONDS }}
+          INVITATION_EXPIRE_HOURS: ${{ vars.INVITATION_EXPIRE_HOURS }}
+
           API_BIND_ADDRESS: ${{ vars.API_BIND_ADDRESS }}
           API_PORT: ${{ vars.API_PORT }}
         run: |
@@ -146,6 +159,10 @@ jobs:
               "AWS_SECRET_ACCESS_KEY",
               "AWS_REGION",
               "AWS_S3_BUCKET",
+              "SMTP_HOST",
+              "SMTP_FROM_EMAIL",
+              "FRONTEND_URL",
+              "DOCTOR_FRONTEND_URL",
           ]
 
           missing = [
@@ -159,6 +176,17 @@ jobs:
                   "Missing required GitHub production values: "
                   + ", ".join(missing)
               )
+
+          if os.environ.get("SMTP_USERNAME", "").strip() and not os.environ.get("SMTP_PASSWORD", "").strip():
+              raise SystemExit("SMTP_PASSWORD is required when SMTP_USERNAME is set.")
+
+          for name in ("FRONTEND_URL", "DOCTOR_FRONTEND_URL"):
+              frontend = urlsplit(os.environ[name].strip())
+              if (frontend.scheme != "https" or not frontend.hostname
+                  or frontend.hostname in {"localhost", "127.0.0.1", "::1"}
+                  or frontend.username or frontend.password
+                  or frontend.query or frontend.fragment):
+                  raise SystemExit(f"{name} must be a public HTTPS application URL without credentials, query, or fragment.")
 
           database_url = os.environ["DATABASE_URL"].strip()
 
@@ -299,6 +327,25 @@ jobs:
                   or "8000"
               ),
           }
+
+          smtp_defaults = {
+              "SMTP_HOST": "",
+              "SMTP_PORT": "587",
+              "SMTP_USERNAME": "",
+              "SMTP_PASSWORD": "",
+              "SMTP_FROM_EMAIL": "",
+              "SMTP_FROM_NAME": "Meridian Health AI",
+              "SMTP_USE_TLS": "true",
+              "SMTP_USE_SSL": "false",
+              "SMTP_TIMEOUT_SECONDS": "20",
+              "SMTP_RETRY_ATTEMPTS": "3",
+              "SMTP_RETRY_BASE_SECONDS": "1",
+              "INVITATION_EXPIRE_HOURS": "48",
+          }
+          values.update({
+              name: os.environ.get(name) or default
+              for name, default in smtp_defaults.items()
+          })
 
           for name, value in values.items():
               if "\n" in value or "\r" in value:
