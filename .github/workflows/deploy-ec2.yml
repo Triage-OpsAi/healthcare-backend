@@ -121,8 +121,8 @@ jobs:
           AWS_S3_PRESIGN_EXPIRE_SECONDS: ${{ secrets.AWS_S3_PRESIGN_EXPIRE_SECONDS || vars.AWS_S3_PRESIGN_EXPIRE_SECONDS }}
           VOICE_UPLOAD_MAX_BYTES: ${{ vars.VOICE_UPLOAD_MAX_BYTES }}
 
-          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
-          DOCTOR_FRONTEND_URL: ${{ vars.DOCTOR_FRONTEND_URL }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          DOCTOR_FRONTEND_URL: ${{ secrets.DOCTOR_FRONTEND_URL }}
           CORS_ORIGINS: ${{ secrets.CORS_ORIGINS || vars.CORS_ORIGINS }}
 
           SMTP_HOST: ${{ vars.SMTP_HOST || secrets.SMTP_HOST }}
