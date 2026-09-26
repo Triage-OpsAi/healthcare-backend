@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.db.database import get_db
 from app.db.clinical_documents import Department, UserDepartment, PatientConsent
 from app.db.models import EMRRecord, EMRRecordCode, MedicalCode, Encounter, PatientVisit, Role, User
-from app.schemas.clinical_documents import ConsentForm, ConsentWithdrawal, DepartmentAssignment, DepartmentCreate, SpeechRequest
+from app.schemas.clinical_documents import DemoConsentForm, ConsentForm, ConsentWithdrawal, DepartmentAssignment, DepartmentCreate, SpeechRequest
 from app.schemas.patient_chart import PatientSectionKey
 from app.services import clinical_documents as documents, patient_chart_service as charts
 from app.services.authorization import require_permission
@@ -146,7 +146,7 @@ async def withdraw_consent(patient_id: uuid.UUID, consent_id: uuid.UUID, payload
 
 @router.post("/patients/{patient_id}/consent-audio")
 async def consent_audio(patient_id: uuid.UUID, payload: SpeechRequest, response: Response,
-                        db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_permission("emr:create"))):
+                        db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_permission("emr:read"))):
     await charts._patient(db, patient_id, user)
     response.headers["Cache-Control"] = "no-store"
     if not settings.SARVAM_API_KEY:
@@ -208,3 +208,43 @@ async def complete_record(patient_id: uuid.UUID, response: Response, db: AsyncSe
         "gender": patient.gender, "phone": patient.phone}, "chart": chart, "original_entries": originals,
         "ward_entries": ward_entries, "consents": consents, "sections": sections, "attestations": [documents.attestation_json(row) for row in signed],
         "generated_at": datetime.now(timezone.utc)})
+
+
+@router.get("/patients/{patient_id}/consent-template")
+async def consent_template(patient_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_permission("emr:read"))):
+    from app.db.models import Hospital
+    from app.services.demo_consent import TEMPLATE, consent_prefill
+    patient = await charts._patient(db, patient_id, user)
+    hospital = await db.get(Hospital, patient.hospital_id)
+    actor = await documents.signer(db, user)
+    return {"template": TEMPLATE, "hospital_name": hospital.name, "patient_reference": patient.abha_id or str(patient.id)[:8].upper(),
+            "patient_name": patient.full_name, "date": datetime.now(timezone.utc).isoformat(),
+            "prefill": consent_prefill(patient, actor.full_name)}
+
+
+@router.post("/patients/{patient_id}/consents/form", status_code=201)
+@router.post("/patients/{patient_id}/consents/demo", status_code=201, include_in_schema=False)
+async def create_demo_consent(patient_id: uuid.UUID, payload: DemoConsentForm, db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_permission("emr:create"))):
+    from app.db.models import Hospital
+    from app.services.demo_consent import build_demo_form
+    patient = await charts._patient(db, patient_id, user)
+    department = await documents.department(db, payload.department_id, patient.hospital_id)
+    actor = await documents.signer(db, user)
+    if payload.visit_id:
+        visit = await db.get(PatientVisit, payload.visit_id)
+        if visit is None or visit.patient_id != patient_id or visit.hospital_id != patient.hospital_id:
+            raise HTTPException(404, "Visit not found for this patient")
+    hospital = await db.get(Hospital, patient.hospital_id)
+    signed_at = datetime.now(timezone.utc)
+    form = build_demo_form(payload, patient, hospital.name, actor.full_name, signed_at)
+    row = PatientConsent(hospital_id=patient.hospital_id, patient_id=patient_id, visit_id=payload.visit_id,
+        department_id=department.id, department_name=department.name, recorded_by=actor.id,
+        clinician_name=actor.full_name, form=form, revision=documents.revision(form), signed_at=signed_at)
+    db.add(row)
+    await db.flush()
+    documents.audit(db, user, "patient_consent.demo_signed" if payload.template_version == "demo-consent-v1" else "patient_consent.signed", "patient_consent", row.id, patient_id,
+                    {"revision": row.revision, "data_decision": payload.data_decision,
+                     "procedure_decision": payload.procedure_decision, "language": payload.language})
+    await db.commit()
+    await db.refresh(row)
+    return documents.consent_json(row)

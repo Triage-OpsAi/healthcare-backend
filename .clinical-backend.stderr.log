@@ -1,0 +1,174 @@
+INFO:     Will watch for changes in these directories: ['D:\\personal\\healthcare-backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [86476] using WatchFiles
+INFO:     Started server process [103744]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+Rate limiter unavailable
+Traceback (most recent call last):
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 276, in connect
+    await self.retry.call_with_retry(
+        lambda: self._connect(), lambda error: self.disconnect()
+    )
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\retry.py", line 59, in call_with_retry
+    return await do()
+           ^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 682, in _connect
+    reader, writer = await asyncio.open_connection(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        **self._connection_arguments()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\aihig\miniconda3\Lib\asyncio\streams.py", line 48, in open_connection
+    transport, _ = await loop.create_connection(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        lambda: protocol, host, port, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\aihig\miniconda3\Lib\asyncio\base_events.py", line 1174, in create_connection
+    raise OSError('Multiple exceptions: {}'.format(
+        ', '.join(str(exc) for exc in exceptions)))
+OSError: Multiple exceptions: [Errno 10060] Connect call failed ('172.31.34.250', 6379), [Errno 10060] Connect call failed ('172.31.39.249', 6379), [Errno 10060] Connect call failed ('172.31.26.164', 6379), [Errno 10060] Connect call failed ('172.31.17.219', 6379), [Errno 10060] Connect call failed ('172.31.41.255', 6379), [Errno 10060] Connect call failed ('172.31.26.69', 6379), [Errno 10060] Connect call failed ('172.31.3.47', 6379), [Errno 10060] Connect call failed ('172.31.6.9', 6379), [Errno 10060] Connect call failed ('172.31.9.38', 6379)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\personal\healthcare-backend\app\middleware\security.py", line 80, in dispatch
+    count = int(await self._redis.eval(self._script, 1, key, window))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\client.py", line 610, in execute_command
+    conn = self.connection or await pool.get_connection(command_name, **options)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 1049, in get_connection
+    await self.ensure_connection(connection)
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 1082, in ensure_connection
+    await connection.connect()
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 284, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error Multiple exceptions: [Errno 10060] Connect call failed ('172.31.34.250', 6379), [Errno 10060] Connect call failed ('172.31.39.249', 6379), [Errno 10060] Connect call failed ('172.31.26.164', 6379), [Errno 10060] Connect call failed ('172.31.17.219', 6379), [Errno 10060] Connect call failed ('172.31.41.255', 6379), [Errno 10060] Connect call failed ('172.31.26.69', 6379), [Errno 10060] Connect call failed ('172.31.3.47', 6379), [Errno 10060] Connect call failed ('172.31.6.9', 6379), [Errno 10060] Connect call failed ('172.31.9.38', 6379) connecting to triage-ops-redis-cgoqbj.serverless.aps1.cache.amazonaws.com:6379.
+Rate limiter unavailable
+Traceback (most recent call last):
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 276, in connect
+    await self.retry.call_with_retry(
+        lambda: self._connect(), lambda error: self.disconnect()
+    )
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\retry.py", line 59, in call_with_retry
+    return await do()
+           ^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 682, in _connect
+    reader, writer = await asyncio.open_connection(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        **self._connection_arguments()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\aihig\miniconda3\Lib\asyncio\streams.py", line 48, in open_connection
+    transport, _ = await loop.create_connection(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        lambda: protocol, host, port, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\aihig\miniconda3\Lib\asyncio\base_events.py", line 1174, in create_connection
+    raise OSError('Multiple exceptions: {}'.format(
+        ', '.join(str(exc) for exc in exceptions)))
+OSError: Multiple exceptions: [Errno 10060] Connect call failed ('172.31.9.38', 6379), [Errno 10060] Connect call failed ('172.31.3.47', 6379), [Errno 10060] Connect call failed ('172.31.17.219', 6379), [Errno 10060] Connect call failed ('172.31.39.249', 6379), [Errno 10060] Connect call failed ('172.31.41.255', 6379), [Errno 10060] Connect call failed ('172.31.26.164', 6379), [Errno 10060] Connect call failed ('172.31.26.69', 6379), [Errno 10060] Connect call failed ('172.31.6.9', 6379), [Errno 10060] Connect call failed ('172.31.34.250', 6379)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\personal\healthcare-backend\app\middleware\security.py", line 80, in dispatch
+    count = int(await self._redis.eval(self._script, 1, key, window))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\client.py", line 610, in execute_command
+    conn = self.connection or await pool.get_connection(command_name, **options)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 1049, in get_connection
+    await self.ensure_connection(connection)
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 1082, in ensure_connection
+    await connection.connect()
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 284, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error Multiple exceptions: [Errno 10060] Connect call failed ('172.31.9.38', 6379), [Errno 10060] Connect call failed ('172.31.3.47', 6379), [Errno 10060] Connect call failed ('172.31.17.219', 6379), [Errno 10060] Connect call failed ('172.31.39.249', 6379), [Errno 10060] Connect call failed ('172.31.41.255', 6379), [Errno 10060] Connect call failed ('172.31.26.164', 6379), [Errno 10060] Connect call failed ('172.31.26.69', 6379), [Errno 10060] Connect call failed ('172.31.6.9', 6379), [Errno 10060] Connect call failed ('172.31.34.250', 6379) connecting to triage-ops-redis-cgoqbj.serverless.aps1.cache.amazonaws.com:6379.
+Rate limiter unavailable
+Traceback (most recent call last):
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 276, in connect
+    await self.retry.call_with_retry(
+        lambda: self._connect(), lambda error: self.disconnect()
+    )
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\retry.py", line 59, in call_with_retry
+    return await do()
+           ^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 682, in _connect
+    reader, writer = await asyncio.open_connection(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        **self._connection_arguments()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\aihig\miniconda3\Lib\asyncio\streams.py", line 48, in open_connection
+    transport, _ = await loop.create_connection(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        lambda: protocol, host, port, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\aihig\miniconda3\Lib\asyncio\base_events.py", line 1174, in create_connection
+    raise OSError('Multiple exceptions: {}'.format(
+        ', '.join(str(exc) for exc in exceptions)))
+OSError: Multiple exceptions: [Errno 10060] Connect call failed ('172.31.9.38', 6379), [Errno 10060] Connect call failed ('172.31.3.47', 6379), [Errno 10060] Connect call failed ('172.31.17.219', 6379), [Errno 10060] Connect call failed ('172.31.39.249', 6379), [Errno 10060] Connect call failed ('172.31.41.255', 6379), [Errno 10060] Connect call failed ('172.31.26.164', 6379), [Errno 10060] Connect call failed ('172.31.26.69', 6379), [Errno 10060] Connect call failed ('172.31.6.9', 6379), [Errno 10060] Connect call failed ('172.31.34.250', 6379)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\personal\healthcare-backend\app\middleware\security.py", line 80, in dispatch
+    count = int(await self._redis.eval(self._script, 1, key, window))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\client.py", line 610, in execute_command
+    conn = self.connection or await pool.get_connection(command_name, **options)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 1049, in get_connection
+    await self.ensure_connection(connection)
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 1082, in ensure_connection
+    await connection.connect()
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 284, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error Multiple exceptions: [Errno 10060] Connect call failed ('172.31.9.38', 6379), [Errno 10060] Connect call failed ('172.31.3.47', 6379), [Errno 10060] Connect call failed ('172.31.17.219', 6379), [Errno 10060] Connect call failed ('172.31.39.249', 6379), [Errno 10060] Connect call failed ('172.31.41.255', 6379), [Errno 10060] Connect call failed ('172.31.26.164', 6379), [Errno 10060] Connect call failed ('172.31.26.69', 6379), [Errno 10060] Connect call failed ('172.31.6.9', 6379), [Errno 10060] Connect call failed ('172.31.34.250', 6379) connecting to triage-ops-redis-cgoqbj.serverless.aps1.cache.amazonaws.com:6379.
+Rate limiter unavailable
+Traceback (most recent call last):
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 276, in connect
+    await self.retry.call_with_retry(
+        lambda: self._connect(), lambda error: self.disconnect()
+    )
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\retry.py", line 59, in call_with_retry
+    return await do()
+           ^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 682, in _connect
+    reader, writer = await asyncio.open_connection(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        **self._connection_arguments()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\aihig\miniconda3\Lib\asyncio\streams.py", line 48, in open_connection
+    transport, _ = await loop.create_connection(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        lambda: protocol, host, port, **kwds)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\aihig\miniconda3\Lib\asyncio\base_events.py", line 1174, in create_connection
+    raise OSError('Multiple exceptions: {}'.format(
+        ', '.join(str(exc) for exc in exceptions)))
+OSError: Multiple exceptions: [Errno 10060] Connect call failed ('172.31.9.38', 6379), [Errno 10060] Connect call failed ('172.31.3.47', 6379), [Errno 10060] Connect call failed ('172.31.17.219', 6379), [Errno 10060] Connect call failed ('172.31.39.249', 6379), [Errno 10060] Connect call failed ('172.31.41.255', 6379), [Errno 10060] Connect call failed ('172.31.26.164', 6379), [Errno 10060] Connect call failed ('172.31.26.69', 6379), [Errno 10060] Connect call failed ('172.31.6.9', 6379), [Errno 10060] Connect call failed ('172.31.34.250', 6379)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\personal\healthcare-backend\app\middleware\security.py", line 80, in dispatch
+    count = int(await self._redis.eval(self._script, 1, key, window))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\client.py", line 610, in execute_command
+    conn = self.connection or await pool.get_connection(command_name, **options)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 1049, in get_connection
+    await self.ensure_connection(connection)
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 1082, in ensure_connection
+    await connection.connect()
+  File "D:\personal\healthcare-backend\.venv\Lib\site-packages\redis\asyncio\connection.py", line 284, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error Multiple exceptions: [Errno 10060] Connect call failed ('172.31.9.38', 6379), [Errno 10060] Connect call failed ('172.31.3.47', 6379), [Errno 10060] Connect call failed ('172.31.17.219', 6379), [Errno 10060] Connect call failed ('172.31.39.249', 6379), [Errno 10060] Connect call failed ('172.31.41.255', 6379), [Errno 10060] Connect call failed ('172.31.26.164', 6379), [Errno 10060] Connect call failed ('172.31.26.69', 6379), [Errno 10060] Connect call failed ('172.31.6.9', 6379), [Errno 10060] Connect call failed ('172.31.34.250', 6379) connecting to triage-ops-redis-cgoqbj.serverless.aps1.cache.amazonaws.com:6379.

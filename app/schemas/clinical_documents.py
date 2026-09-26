@@ -102,3 +102,50 @@ class ConsentWithdrawal(BaseModel):
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=2, max_length=2400)
     language: Literal["en", "hi"]
+
+
+class ConsentEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(default="", max_length=300)
+    ink: Signature | None = None
+
+    @model_validator(mode="after")
+    def one_format(self):
+        self.text = self.text.strip()
+        if self.text and self.ink:
+            raise ValueError("Use handwriting or typed text for each field, not both")
+        return self
+
+
+DemoField = Literal["patient_name", "age", "gender", "mobile", "address", "procedure", "purpose",
+                    "representative_name", "patient_date", "clinician_name", "registration",
+                    "clinician_date", "witness_name", "witness_date"]
+
+
+class DemoConsentForm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    template_version: Literal["demo-consent-v1", "hospital-consent-v2"]
+    department_id: uuid.UUID
+    visit_id: uuid.UUID | None = None
+    language: Literal["en", "hi"]
+    fields: dict[DemoField, ConsentEntry]
+    data_decision: Literal["accepted", "declined"]
+    procedure_decision: Literal["accepted", "declined"]
+    patient_signature: Signature
+    clinician_signature: Signature
+    witness_signature: Signature | None = None
+    confirmed: Literal[True]
+
+    @model_validator(mode="after")
+    def complete_form(self):
+        def filled(key):
+            entry = self.fields.get(key)
+            return bool(entry and (entry.text or entry.ink))
+        for key in ("patient_name", "representative_name", "clinician_name", "procedure", "purpose"):
+            if not filled(key):
+                raise ValueError(f"Complete {key.replace('_', ' ')} by hand or typing")
+        if filled("witness_name") != bool(self.witness_signature):
+            raise ValueError("Provide both witness name and signature")
+        if filled("witness_date") and not self.witness_signature:
+            raise ValueError("Witness date requires a witness name and signature")
+        return self
