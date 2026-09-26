@@ -55,10 +55,12 @@ async def records(
 
 @router.get("/patients", response_model=list[PatientDashboardSummary])
 async def patients(
+    refresh: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(require_permission("emr:read")),
 ):
-    return await doctor_service.list_patients(db, current_user)
+    from app.services.patient_list_cache import patient_list
+    return await patient_list(db, current_user, doctor_service.list_patients, refresh)
 
 
 @router.get("/roles", response_model=list[ClinicalRoleSummary])

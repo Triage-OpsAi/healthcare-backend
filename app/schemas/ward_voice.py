@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TaskSummary(BaseModel):
@@ -136,6 +136,13 @@ class ConfirmObservation(BaseModel):
     requires_countersign: bool = False
 
 
+    @model_validator(mode="after")
+    def validate_vital(self):
+        if self.observation_type in {"systolic_bp", "diastolic_bp", "blood_glucose", "temperature", "pulse", "spo2", "respiratory_rate"}:
+            VitalReading(observation_type=self.observation_type, value_numeric=self.value_numeric, unit=self.unit)
+        return self
+
+
 class ConfirmCaptureRequest(BaseModel):
     observations: list[ConfirmObservation]
 
@@ -230,3 +237,37 @@ class ConsumableSummary(BaseModel):
     approval_status: Literal["pending", "approved"]
     approved_by: str | None
     approved_at: datetime | None
+
+
+class VitalReading(BaseModel):
+    observation_type: Literal["systolic_bp", "diastolic_bp", "blood_glucose", "temperature", "pulse", "spo2", "respiratory_rate"]
+    value_numeric: float = Field(gt=0, allow_inf_nan=False)
+    unit: Literal["mmHg", "mg/dL", "mmol/L", "C", "F", "/min", "%"]
+
+    @model_validator(mode="after")
+    def correct_unit(self):
+        units = {"systolic_bp": {"mmHg"}, "diastolic_bp": {"mmHg"}, "blood_glucose": {"mg/dL", "mmol/L"},
+                 "temperature": {"C", "F"}, "pulse": {"/min"}, "spo2": {"%"}, "respiratory_rate": {"/min"}}
+        if self.unit not in units[self.observation_type]:
+            raise ValueError("Select the correct unit for this observation")
+        if self.observation_type == "spo2" and self.value_numeric > 100:
+            raise ValueError("Oxygen saturation cannot exceed 100%")
+        return self
+
+
+class VitalsCreate(BaseModel):
+    bed_id: uuid.UUID
+    patient_id: uuid.UUID
+    observed_at: datetime
+    readings: list[VitalReading] = Field(min_length=1, max_length=7)
+
+    @model_validator(mode="after")
+    def unique_readings(self):
+        if self.observed_at.tzinfo is None:
+            raise ValueError("Observation time must include a timezone")
+        keys = [item.observation_type for item in self.readings]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Only one reading of each vital is allowed")
+        if ("systolic_bp" in keys) != ("diastolic_bp" in keys):
+            raise ValueError("Enter both systolic and diastolic blood pressure")
+        return self

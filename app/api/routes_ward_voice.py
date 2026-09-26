@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser
 from app.db.database import get_db
 from app.schemas.ward_voice import (
-    BedSummary, CloseChartRequest, ConfirmCaptureRequest, ConsumableSummary, CountersignSummary, FluidChartResponse,
+    VitalsCreate, BedSummary, CloseChartRequest, ConfirmCaptureRequest, ConsumableSummary, CountersignSummary, FluidChartResponse,
     FluidEntryCreate, IVInfusionCreate, TaskUpdate, VoiceCaptureComplete,
     VoiceCaptureCreate, VoiceCaptureResult, VoiceCaptureUpload, WardCard, WardVoiceOverview,
 )
@@ -169,3 +169,13 @@ async def countersign(
 ):
     await ward_voice_service.countersign(db, observation_id, user)
     return Response(status_code=204)
+
+
+@router.post("/vitals", status_code=201)
+async def record_vitals(payload: VitalsCreate, db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_permission("emr:create"))):
+    return await ward_voice_service.record_vitals(db, payload, user)
+
+
+@router.get("/patients/{patient_id}/vitals")
+async def patient_vitals(patient_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_permission("emr:read"))):
+    return await ward_voice_service.patient_vitals(db, patient_id, user)

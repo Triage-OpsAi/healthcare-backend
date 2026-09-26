@@ -17,12 +17,15 @@ def revision(snapshot):
 def section_snapshot(chart, section, patient_id, visit_id=None):
     data = chart.model_dump(mode="json")
     fields = {
-        "summary": ["records"], "clinical": ["records"], "diagnoses": ["records"],
-        "timeline": ["visits", "records"], "medications": ["medications"],
+        "summary": ["records"], "clinical": ["records", "ward_vitals"], "diagnoses": ["records"],
+        "timeline": ["visits", "records", "encounter_timeline"], "medications": ["medications"],
         "reports": ["reports"], "documents": ["discharge_summaries"], "handover": ["handovers"],
     }
     if section not in fields:
         raise HTTPException(422, "Unknown clinical section")
+    if section in ("clinical", "reports", "documents", "timeline"):
+        data["specialty_documents"] = [d for d in data.get("specialty_documents", []) if section == "timeline" or d["destination"] == section]
+        fields[section] = [*fields[section], "specialty_documents"]
     review = next((r for r in data["section_reviews"] if r["section_key"] == section), {})
     return {
         "patient_id": str(patient_id), "visit_id": str(visit_id) if visit_id else None,
@@ -116,3 +119,42 @@ async def validate_chart_approvals(db, chart, patient_id, hospital_id, visit_id)
         review.approved_at = latest.signed_at if review.is_approved else None
     chart.approval_percentage = round(100 * sum(r.is_approved for r in chart.section_reviews) / 8)
     return chart
+
+
+async def bulk_preview(db, patient_id, visit_id, user):
+    from app.services import patient_chart_service as charts
+    if user.role.lower() != "doctor":
+        raise HTTPException(403, "Only doctors can approve all sections")
+    chart = await charts.get_chart(db, patient_id=patient_id, visit_id=visit_id, current_user=user)
+    snapshots = [section_snapshot(chart, key, patient_id, visit_id) for key in charts.SECTION_KEYS]
+    snapshots = [snapshot for snapshot in snapshots if not snapshot["review"]["is_deleted"]]
+    return {"snapshot": snapshots, "revision": revision(snapshots), "sections": [s["section"] for s in snapshots]}
+
+
+async def signed_approve_all(db, patient_id, payload, user):
+    from app.services import patient_chart_service as charts
+    from sqlalchemy import func
+    if user.role.lower() != "doctor":
+        raise HTTPException(403, "Only doctors can approve all sections")
+    patient = await charts._patient(db, patient_id, user)
+    for key in sorted(charts.SECTION_KEYS):
+        await db.execute(select(func.pg_advisory_xact_lock(func.hashtext(f"signature:{patient_id}:{key}"))))
+    preview = await bulk_preview(db, patient_id, payload.visit_id, user)
+    if payload.revision != preview["revision"]:
+        raise HTTPException(409, "The record changed. Review the latest version and sign again.")
+    if not preview["snapshot"]:
+        raise HTTPException(409, "There are no sections to approve")
+    actor = await signer(db, user)
+    for snapshot in preview["snapshot"]:
+        section = snapshot["section"]
+        item = ClinicalAttestation(id=uuid.uuid4(), hospital_id=patient.hospital_id, patient_id=patient.id,
+            visit_id=payload.visit_id, section_key=section, signer_id=actor.id, signer_name=actor.full_name,
+            signer_role=user.role, signature=payload.signature.model_dump(), snapshot=snapshot, revision=revision(snapshot))
+        db.add(item)
+        review = await charts._section_review(db, patient=patient, section_key=section, current_user=user)
+        review.is_approved = True; review.approved_by = actor.id
+        review.approved_at = datetime.now(timezone.utc); review.updated_by = actor.id
+        audit(db, user, "patient_section.signed", "clinical_attestation", item.id, patient.id,
+              {"revision": item.revision, "section": section, "bulk": True})
+    await db.commit()
+    return {"approved_sections": preview["sections"]}

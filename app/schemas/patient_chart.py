@@ -227,6 +227,9 @@ class PatientSectionReviewSummary(BaseModel):
 
 
 class PatientChart(BaseModel):
+    specialty_documents: list[dict] = Field(default_factory=list)
+    ward_vitals: list[dict] = Field(default_factory=list)
+    encounter_timeline: list[dict] = Field(default_factory=list)
     records: list[PatientRecordSummary]
     reports: list[PatientReportSummary]
     medications: list[PatientMedicationSummary]

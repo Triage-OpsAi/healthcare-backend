@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.db.database import get_db
 from app.db.clinical_documents import Department, UserDepartment, PatientConsent
 from app.db.models import EMRRecord, EMRRecordCode, MedicalCode, Encounter, PatientVisit, Role, User
-from app.schemas.clinical_documents import DemoConsentForm, ConsentForm, ConsentWithdrawal, DepartmentAssignment, DepartmentCreate, SpeechRequest
+from app.schemas.clinical_documents import ApprovalRequest, DemoConsentForm, ConsentForm, ConsentWithdrawal, DepartmentAssignment, DepartmentCreate, SpeechRequest
 from app.schemas.patient_chart import PatientSectionKey
 from app.services import clinical_documents as documents, patient_chart_service as charts
 from app.services.authorization import require_permission
@@ -202,11 +202,13 @@ async def complete_record(patient_id: uuid.UUID, response: Response, db: AsyncSe
         latest = next((row for row in signed if row.section_key == key and row.visit_id is None), None)
         signature = documents.attestation_json(latest) if latest and latest.revision == digest else None
         sections.append({"key": key, "snapshot": snapshot, "attestation": signature})
+    vitals = chart.ward_vitals
+    timeline = chart.encounter_timeline
     documents.audit(db, user, "patient_record.viewed", "patient", patient_id, patient_id)
     await db.commit()
     return jsonable_encoder({"patient": {"id": patient.id, "name": patient.full_name, "date_of_birth": patient.date_of_birth,
         "gender": patient.gender, "phone": patient.phone}, "chart": chart, "original_entries": originals,
-        "ward_entries": ward_entries, "consents": consents, "sections": sections, "attestations": [documents.attestation_json(row) for row in signed],
+        "specialty_documents": chart.specialty_documents, "ward_entries": ward_entries, "vitals": vitals, "encounter_timeline": timeline, "consents": consents, "sections": sections, "attestations": [documents.attestation_json(row) for row in signed],
         "generated_at": datetime.now(timezone.utc)})
 
 
@@ -248,3 +250,13 @@ async def create_demo_consent(patient_id: uuid.UUID, payload: DemoConsentForm, d
     await db.commit()
     await db.refresh(row)
     return documents.consent_json(row)
+
+
+@router.get("/patients/{patient_id}/approve-all-preview")
+async def approve_all_preview(patient_id: uuid.UUID, visit_id: uuid.UUID | None = None, db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_permission("emr:review"))):
+    return await documents.bulk_preview(db, patient_id, visit_id, user)
+
+
+@router.post("/patients/{patient_id}/approve-all")
+async def approve_all(patient_id: uuid.UUID, payload: ApprovalRequest, db: AsyncSession = Depends(get_db), user: CurrentUser = Depends(require_permission("emr:review"))):
+    return await documents.signed_approve_all(db, patient_id, payload, user)

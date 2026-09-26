@@ -17,7 +17,7 @@ OBSERVATION_SCHEMA = {
                 "properties": {
                     "observation_type": {
                         "type": "string",
-                        "enum": ["systolic_bp", "diastolic_bp", "temperature", "pulse", "spo2", "urine_output", "fluid_output", "oral_intake", "consumable", "vomit", "drainage", "note"],
+                        "enum": ["systolic_bp", "diastolic_bp", "blood_glucose", "respiratory_rate", "temperature", "pulse", "spo2", "urine_output", "fluid_output", "oral_intake", "consumable", "vomit", "drainage", "note"],
                     },
                     "value_numeric": {"anyOf": [{"type": "number"}, {"type": "null"}]},
                     "value_text": {"anyOf": [{"type": "string"}, {"type": "null"}]},
@@ -45,7 +45,7 @@ name in value_text. Preserve an explicitly spoken quantity in value_numeric and 
 oral_intake and consumable observation must require a doctor countersign.
 Classify an explicitly spoken output volume with no urine/vomit/drain type as fluid_output;
 do not downgrade it to a note. Use mmHg for blood pressure, C for temperature, /min for pulse,
-and % for SpO2. Mark clinically unusual values or confidence below 0.85 as requiring
+and % for SpO2. Extract explicitly spoken sugar/glucose as blood_glucose and respiratory rate as respiratory_rate. Preserve mg/dL or mmol/L exactly for glucose; never guess an unstated glucose unit. Use /min for respiratory rate. Preserve explicitly spoken F for temperature; do not convert it to C. Mark clinically unusual values or confidence below 0.85 as requiring
 countersign. This output is a suggestion and must never be charted without nurse confirmation."""
 
 

@@ -258,7 +258,23 @@ async def get_chart(
             if item.recorded_at >= selected_visit.created_at
             and (period_end is None or item.recorded_at < period_end)
         ]
+    ward_vitals = await ward_voice_service.patient_vitals(db, patient.id, current_user)
+    if selected_visit:
+        ward_vitals = [row for row in ward_vitals if row["observed_at"] >= selected_visit.created_at
+                       and (period_end is None or row["observed_at"] < period_end)]
+    timeline_conditions = [Encounter.patient_id == patient.id, Encounter.hospital_id == patient.hospital_id]
+    if visit_id:
+        timeline_conditions.append(Encounter.visit_id == visit_id)
+    timeline_rows = (await db.execute(select(Encounter, User.full_name).join(User, User.id == Encounter.doctor_id)
+        .where(*timeline_conditions).order_by(Encounter.created_at))).all()
+    encounter_timeline = [{"date": encounter.created_at, "encounter": encounter.encounter_number or str(encounter.id)[:8].upper(),
+        "department": encounter.department, "clinician": name, "status": encounter.status,
+        "ward": encounter.ward_number, "bed": encounter.bed_number} for encounter, name in timeline_rows]
+    from app.services.documentation_service import list_documents
+    specialty_documents = await list_documents(db, patient.id, current_user, finalized=True, visit_id=visit_id)
     chart = PatientChart(
+        specialty_documents=specialty_documents,
+        ward_vitals=ward_vitals, encounter_timeline=encounter_timeline,
         records=[
             PatientRecordSummary(
                 id=record.id,

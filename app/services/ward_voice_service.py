@@ -678,3 +678,44 @@ async def countersign(db: AsyncSession, observation_id: uuid.UUID, user: Current
         item.countersigned_by, item.countersigned_at = _user_id(user), datetime.now(timezone.utc)
         await _audit(db, user, "observation.countersigned", "observation", item.id, item.patient_id)
         await db.commit()
+
+
+async def record_vitals(db, payload, user):
+    bed = await _bed(db, payload.bed_id, user)
+    if bed.patient_id != payload.patient_id:
+        raise HTTPException(409, "The bed assignment changed. Select the patient again.")
+    now = datetime.now(timezone.utc)
+    if payload.observed_at > now + timedelta(minutes=5):
+        raise HTTPException(422, "Observation time cannot be in the future")
+    capture = VoiceCapture(id=uuid.uuid4(), hospital_id=bed.hospital_id, ward_id=bed.ward_id,
+        bed_id=bed.id, patient_id=bed.patient_id, captured_by=_user_id(user),
+        object_key=f"manual-vitals/{uuid.uuid4()}", content_type="application/json", file_size=0,
+        status="confirmed", confirmed_at=now, language_code="en",
+        extraction_payload={"source": "manual", "observations": [item.model_dump() for item in payload.readings]})
+    db.add(capture)
+    await db.flush()
+    for item in payload.readings:
+        db.add(ExtractedObservation(hospital_id=bed.hospital_id, capture_id=capture.id, patient_id=bed.patient_id,
+            observation_type=item.observation_type, value_numeric=item.value_numeric,
+            confirmed_value_numeric=item.value_numeric, unit=item.unit, confirmed_by=_user_id(user),
+            confirmed_at=now, observed_at=payload.observed_at, requires_countersign=False))
+    await _audit(db, user, "vitals.recorded", "voice_capture", capture.id, bed.patient_id,
+                 {"types": [item.observation_type for item in payload.readings]})
+    await db.commit()
+    return {"status": "recorded", "capture_id": capture.id}
+
+
+async def patient_vitals(db, patient_id, user):
+    from app.services.patient_chart_service import _patient
+    await _patient(db, patient_id, user)
+    rows = (await db.execute(select(ExtractedObservation, User.full_name).outerjoin(User,
+        User.id == ExtractedObservation.confirmed_by).where(
+        ExtractedObservation.patient_id == patient_id, ExtractedObservation.hospital_id == _hospital_id(user),
+        ExtractedObservation.confirmed_at.is_not(None),
+        ExtractedObservation.observation_type.in_(["systolic_bp", "diastolic_bp", "blood_glucose", "temperature", "pulse", "spo2", "respiratory_rate"])
+    ).order_by(ExtractedObservation.observed_at.desc(), ExtractedObservation.id))).all()
+    return [{"id": row.id, "observation_type": row.observation_type,
+             "value": row.confirmed_value_numeric if row.confirmed_value_numeric is not None else row.confirmed_value_text,
+             "unit": row.unit, "observed_at": row.observed_at, "recorded_by": name,
+             "review_status": "Countersigned" if row.countersigned_at else "Awaiting countersign" if row.requires_countersign else "Confirmed"}
+            for row, name in rows]
