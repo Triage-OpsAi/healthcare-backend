@@ -20,6 +20,7 @@ Design principles applied throughout (discussed in the architecture review):
    data, which you'll need for DPDP Act compliance and hospital audits.
 """
 import uuid
+from app.db.clinical_documents import Department, UserDepartment, ClinicalAttestation, PatientConsent  # noqa: F401
 from datetime import date, datetime
 
 from sqlalchemy import (

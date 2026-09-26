@@ -258,7 +258,7 @@ async def get_chart(
             if item.recorded_at >= selected_visit.created_at
             and (period_end is None or item.recorded_at < period_end)
         ]
-    return PatientChart(
+    chart = PatientChart(
         records=[
             PatientRecordSummary(
                 id=record.id,
@@ -292,6 +292,8 @@ async def get_chart(
         visits=list(reversed(visits)),
         selected_visit=selected_visit,
     )
+    from app.services.clinical_documents import validate_chart_approvals
+    return await validate_chart_approvals(db, chart, patient.id, patient.hospital_id, visit_id)
 
 
 async def create_visit(
@@ -428,6 +430,9 @@ async def edit_section(
         "is_deleted": review.is_deleted,
     }
     review.content_override = payload.content_override.strip() or None
+    review.is_approved = False
+    review.approved_by = None
+    review.approved_at = None
     review.is_deleted = False
     review.updated_by = uuid.UUID(current_user.user_id)
     await db.commit()
@@ -481,6 +486,9 @@ async def edit_section_item(
     before = overrides.get(key)
     overrides[key] = payload.content_override.strip()
     review.item_overrides = overrides
+    review.is_approved = False
+    review.approved_by = None
+    review.approved_at = None
     review.deleted_items = [
         value for value in (review.deleted_items or []) if value != key
     ]

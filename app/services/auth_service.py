@@ -348,6 +348,15 @@ async def accept_invitation(
                     granted_by=invitation.invited_by,
                 )
             )
+    if hospital:
+        from app.db.clinical_documents import Department, InvitationDepartment, UserDepartment
+        assignment = await db.get(InvitationDepartment, invitation.id)
+        if assignment:
+            department = await db.get(Department, assignment.department_id)
+            if department is None or not department.is_active or department.hospital_id != hospital.id or assignment.hospital_id != hospital.id:
+                raise AuthError("Invitation department is unavailable; ask your administrator for a new invitation")
+            db.add(UserDepartment(user_id=user.id, hospital_id=hospital.id,
+                department_id=department.id, assigned_by=invitation.invited_by))
     invitation.accepted_at = now
     await db.commit()
     await db.refresh(user)

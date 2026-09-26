@@ -5,7 +5,7 @@ import asyncio
 
 from sqlalchemy import inspect, text
 
-from app.db import models  # noqa: F401 - registers SQLAlchemy models
+from app.db import models, ward_voice_models  # noqa: F401 - register all clinical models
 from app.db.database import Base, engine
 
 

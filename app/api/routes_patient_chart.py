@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
+from app.schemas.clinical_documents import ApprovalRequest
+from app.services.clinical_documents import signed_approve
 from app.db.database import get_db
 from app.schemas.patient_chart import (
     AdditionalRecordCreateRequest,
@@ -166,15 +168,11 @@ async def delete_patient_section_item(
 async def approve_patient_section(
     patient_id: uuid.UUID,
     section_key: PatientSectionKey,
+    payload: ApprovalRequest,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(require_permission("emr:review")),
 ):
-    return await patient_chart_service.approve_section(
-        db,
-        patient_id=patient_id,
-        section_key=section_key,
-        current_user=current_user,
-    )
+    return await signed_approve(db, patient_id, section_key, payload, current_user)
 
 
 @router.delete(

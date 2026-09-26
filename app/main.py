@@ -20,6 +20,7 @@ from app.api.routes_doctor import router as doctor_router
 from app.api.routes_emr import router as emr_router
 from app.api.routes_patient_chart import router as patient_chart_router
 from app.api.routes_ward_voice import router as ward_voice_router
+from app.api.routes_clinical_documents import router as clinical_documents_router
 from app.core.config import settings
 from app.schemas.common import HealthResponse
 from app.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
@@ -110,6 +111,7 @@ app.include_router(location_router, prefix="/api/v1")
 app.include_router(service_router, prefix="/api/v1")
 app.include_router(api_key_router, prefix="/api/v1")
 app.include_router(ward_voice_router, prefix="/api/v1")
+app.include_router(clinical_documents_router, prefix="/api/v1")
 
 
 @app.exception_handler(SQLAlchemyError)

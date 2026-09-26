@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from app.api.deps import CurrentUser
+from app.db.clinical_documents import Department, InvitationDepartment, UserDepartment
+from app.services.clinical_documents import department as get_department
 from app.core.config import settings
 from app.core.security import (
     encrypt_workspace_id,
@@ -206,6 +208,8 @@ async def get_workspace(
 
     encrypted_id = encrypt_workspace_id(str(hospital.id))
     slug = workspace_slug(hospital.name)
+    assigned_department = await db.scalar(select(Department).join(UserDepartment, UserDepartment.department_id == Department.id).where(
+        UserDepartment.user_id == user.id, UserDepartment.hospital_id == hospital.id, Department.hospital_id == hospital.id))
     return DoctorWorkspace(
         organization=OrganizationInfo(
             id=hospital.id,
@@ -226,6 +230,8 @@ async def get_workspace(
             email=user.email,
             role=user.role.name,
             permissions=sorted(permission.code for permission in user.role.permissions),
+            department_id=assigned_department.id if assigned_department else None,
+            department_name=assigned_department.name if assigned_department else None,
         ),
         workspace_slug=slug,
         encrypted_client_id=encrypted_id,
@@ -542,6 +548,7 @@ async def create_invitation(
     current_user: CurrentUser,
 ) -> tuple[UserInvitation, str]:
     hospital_id = _hospital_id(current_user)
+    selected_department = await get_department(db, payload.department_id, hospital_id)
     role = await db.scalar(
         select(Role).where(
             Role.id == payload.role_id,
@@ -578,6 +585,8 @@ async def create_invitation(
         + timedelta(hours=settings.INVITATION_EXPIRE_HOURS),
     )
     db.add(invitation)
+    await db.flush()
+    db.add(InvitationDepartment(invitation_id=invitation.id, hospital_id=hospital_id, department_id=selected_department.id))
     await db.commit()
     await db.refresh(invitation)
     return invitation, raw_token

@@ -645,6 +645,16 @@ jobs:
 
           docker compose \
             -f compose.production.yaml \
+            run \
+            --rm \
+            --no-deps \
+            --no-TTY \
+            api \
+            python -m scripts.migrate_clinical_consent \
+            </dev/null
+
+          docker compose \
+            -f compose.production.yaml \
             up \
             --detach \
             --no-build \

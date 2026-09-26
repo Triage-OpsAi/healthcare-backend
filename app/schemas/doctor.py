@@ -13,6 +13,8 @@ class DoctorIdentity(BaseModel):
     email: EmailStr
     role: str
     permissions: list[str]
+    department_id: uuid.UUID | None = None
+    department_name: str | None = None
 
 
 class OrganizationInfo(BaseModel):
@@ -105,6 +107,7 @@ class InviteClinicalUserRequest(BaseModel):
     full_name: str = Field(min_length=2, max_length=255)
     email: EmailStr
     role_id: uuid.UUID
+    department_id: uuid.UUID
 
     @field_validator("full_name", mode="before")
     @classmethod
